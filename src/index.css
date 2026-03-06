@@ -232,6 +232,51 @@ h5 {
   }
 }
 
+/* --- Print / Prescription Styles --- */
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .no-print, button, .sidebar-spacer, .glass, .card-glow, .border-spin-premium {
+    display: none !important;
+  }
+
+  /* Show only the prescription content */
+  .prescription-only {
+    display: block !important;
+    visibility: visible !important;
+    width: 100% !important;
+    padding: 2.54cm !important; /* 1 inch margins */
+    background: white !important;
+    color: black !important;
+  }
+
+  .page-transition, main, #root {
+    background: white !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    transform: none !important;
+    animation: none !important;
+  }
+
+  .glowing-heading {
+    color: black !important;
+    -webkit-text-fill-color: black !important;
+    background: none !important;
+    animation: none !important;
+    font-size: 24pt !important;
+  }
+}
+
+.prescription-only {
+  display: none;
+}
+
 /* Card Glow Border (Realistic/Subtle) */
 .card-glow {
   position: relative;

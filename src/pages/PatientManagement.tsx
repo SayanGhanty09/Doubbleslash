@@ -13,13 +13,58 @@ import { usePatient } from '../components/layout/Shell';
 const PatientManagement: React.FC = () => {
     const { activePatient, setActivePatient } = usePatient();
     const [searchQuery, setSearchQuery] = useState("");
+    const [newPatient, setNewPatient] = useState({
+        firstName: "",
+        lastName: "",
+        age: "",
+        sex: "Male",
+        weight: "",
+        height: "",
+        conditions: "",
+        notes: ""
+    });
 
-    const patients = [
+    const [patients, setPatients] = useState([
         { id: 'P-1001', name: 'John Doe', age: 45, sex: 'Male', lastVisit: '2024-05-20', condition: 'Hypertension' },
         { id: 'P-1002', name: 'Jane Smith', age: 32, sex: 'Female', lastVisit: '2024-05-18', condition: 'Arrhythmia' },
         { id: 'P-1003', name: 'Robert Brown', age: 62, sex: 'Male', lastVisit: '2024-05-10', condition: 'Post-Surgery' },
         { id: 'P-1004', name: 'Sarah Wilson', age: 28, sex: 'Female', lastVisit: '2024-05-05', condition: 'Normal' },
-    ];
+    ]);
+
+    const handleSavePatient = () => {
+        if (!newPatient.firstName || !newPatient.lastName) {
+            alert("Please provide at least a first and last name.");
+            return;
+        }
+
+        const nextId = `P-${1000 + patients.length + 1}`;
+        const addedPatient = {
+            id: nextId,
+            name: `${newPatient.firstName} ${newPatient.lastName}`,
+            age: parseInt(newPatient.age) || 0,
+            sex: newPatient.sex,
+            lastVisit: new Date().toISOString().split('T')[0],
+            condition: newPatient.conditions || 'New Patient'
+        };
+
+        setPatients([...patients, addedPatient]);
+        setActivePatient(addedPatient.name);
+
+        console.log("Saving patient:", addedPatient);
+        alert(`Patient ${addedPatient.name} saved successfully!`);
+
+        // Reset form
+        setNewPatient({
+            firstName: "",
+            lastName: "",
+            age: "",
+            sex: "Male",
+            weight: "",
+            height: "",
+            conditions: "",
+            notes: ""
+        });
+    };
 
     const filteredPatients = patients.filter(p =>
         p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -130,40 +175,111 @@ const PatientManagement: React.FC = () => {
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                 <label style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>First Name</label>
-                                <input type="text" className="glass" style={{ padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }} />
+                                <input
+                                    type="text"
+                                    className="glass"
+                                    value={newPatient.firstName}
+                                    onChange={(e) => setNewPatient({ ...newPatient, firstName: e.target.value })}
+                                    style={{ width: '100%', minWidth: 0, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }}
+                                />
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                 <label style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>Last Name</label>
-                                <input type="text" className="glass" style={{ padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }} />
+                                <input
+                                    type="text"
+                                    className="glass"
+                                    value={newPatient.lastName}
+                                    onChange={(e) => setNewPatient({ ...newPatient, lastName: e.target.value })}
+                                    style={{ width: '100%', minWidth: 0, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }}
+                                />
                             </div>
                         </div>
 
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                 <label style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>Age</label>
-                                <input type="number" className="glass" style={{ padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }} />
+                                <input
+                                    type="number"
+                                    className="glass"
+                                    value={newPatient.age}
+                                    onChange={(e) => setNewPatient({ ...newPatient, age: e.target.value })}
+                                    style={{ width: '100%', minWidth: 0, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }}
+                                />
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                <label style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>Sex</label>
+                                <div style={{ display: 'flex', gap: '4px', background: 'rgba(255,255,255,0.03)', padding: '4px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                    {['Male', 'Female'].map(s => (
+                                        <button
+                                            key={s}
+                                            onClick={() => setNewPatient({ ...newPatient, sex: s })}
+                                            style={{
+                                                flex: 1,
+                                                padding: '6px',
+                                                borderRadius: '6px',
+                                                border: 'none',
+                                                background: newPatient.sex === s ? 'var(--primary-color)' : 'transparent',
+                                                color: newPatient.sex === s ? 'black' : 'var(--text-secondary)',
+                                                fontSize: '0.75rem',
+                                                fontWeight: 600,
+                                                cursor: 'pointer',
+                                                transition: 'all 0.2s'
+                                            }}
+                                        >
+                                            {s}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                 <label style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>Weight (kg)</label>
-                                <input type="number" className="glass" style={{ padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }} />
+                                <input
+                                    type="number"
+                                    className="glass"
+                                    value={newPatient.weight}
+                                    onChange={(e) => setNewPatient({ ...newPatient, weight: e.target.value })}
+                                    style={{ width: '100%', minWidth: 0, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }}
+                                />
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                 <label style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>Height (cm)</label>
-                                <input type="number" className="glass" style={{ padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }} />
+                                <input
+                                    type="number"
+                                    className="glass"
+                                    value={newPatient.height}
+                                    onChange={(e) => setNewPatient({ ...newPatient, height: e.target.value })}
+                                    style={{ width: '100%', minWidth: 0, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }}
+                                />
                             </div>
                         </div>
 
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                             <label style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>Medical Tags / Conditions</label>
-                            <input type="text" placeholder="e.g. Hypertension, Diabetes" className="glass" style={{ padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }} />
+                            <input
+                                type="text"
+                                placeholder="e.g. Hypertension, Diabetes"
+                                className="glass"
+                                value={newPatient.conditions}
+                                onChange={(e) => setNewPatient({ ...newPatient, conditions: e.target.value })}
+                                style={{ width: '100%', minWidth: 0, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none' }}
+                            />
                         </div>
 
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                             <label style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>Clinical Notes</label>
-                            <textarea className="glass" rows={4} style={{ padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none', resize: 'none' }} />
+                            <textarea
+                                className="glass"
+                                rows={4}
+                                value={newPatient.notes}
+                                onChange={(e) => setNewPatient({ ...newPatient, notes: e.target.value })}
+                                style={{ width: '100%', minWidth: 0, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none', resize: 'none' }}
+                            />
                         </div>
 
-                        <button className="btn-shimmer" style={{
+                        <button className="btn-shimmer" onClick={handleSavePatient} style={{
                             width: '100%',
                             padding: '12px',
                             borderRadius: '10px',
