@@ -1,0 +1,421 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap');
+
+:root {
+  --bg-color: #05060a;
+  --surface-color: #0f1117;
+  --surface-lighter: #1a1d26;
+  --primary-color: #00d2ff;
+  --primary-glow: rgba(0, 210, 255, 0.4);
+  --secondary-color: #4f46e5;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-tertiary: #64748b;
+  --border-color: rgba(255, 255, 255, 0.08);
+  --success-color: #10b981;
+  --warning-color: #f59e0b;
+  --error-color: #ef4444;
+  --sidebar-width: 260px;
+  --topbar-height: 70px;
+
+  font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: dark;
+  color: var(--text-primary);
+  background-color: var(--bg-color);
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  min-height: 100vh;
+  overflow-x: hidden;
+  background: transparent;
+  /* Allow fixed canvas elements to show through */
+  padding-bottom: 40px;
+}
+
+#root {
+  min-height: 100vh;
+  background: transparent;
+}
+
+a {
+  font-weight: 500;
+  color: var(--primary-color);
+  text-decoration: inherit;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5 {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.glass {
+  background: rgba(15, 17, 23, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-color);
+}
+
+.glow-shadow {
+  box-shadow: 0 0 20px var(--primary-glow);
+}
+
+.scroll-hide::-webkit-scrollbar {
+  display: none;
+}
+
+.scroll-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Transitions */
+.page-transition {
+  animation: fadeIn 0.4s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Utility for card layout */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 24px;
+  padding: 24px;
+}
+
+/* Glowing Animated Text */
+.glowing-heading {
+  background: linear-gradient(90deg, #ffffff, var(--primary-color), #ffffff);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: textShine 4s linear infinite, textPulse 2s ease-in-out infinite alternate;
+  display: inline-block;
+}
+
+@keyframes textShine {
+  to {
+    background-position: 200% center;
+  }
+}
+
+@keyframes textPulse {
+  from {
+    filter: drop-shadow(0 0 4px rgba(0, 210, 255, 0.3));
+  }
+
+  to {
+    filter: drop-shadow(0 0 12px rgba(0, 210, 255, 0.7)) drop-shadow(0 0 4px rgba(255, 255, 255, 0.4));
+  }
+}
+
+/* --- Premium Animations & Glow Effects --- */
+
+/* Floating Element Animation */
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+@keyframes float {
+  0% {
+    transform: translateY(0px);
+  }
+
+  50% {
+    transform: translateY(-8px);
+  }
+
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+/* Pulsing Status Dot */
+.status-dot {
+  position: relative;
+  width: 10px;
+  height: 10px;
+  background-color: var(--success-color);
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-dot::after {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: -4px;
+  right: -4px;
+  bottom: -4px;
+  border-radius: 50%;
+  border: 2px solid var(--success-color);
+  animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@keyframes ping {
+
+  75%,
+  100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+/* Button Shimmer Effect */
+.btn-shimmer {
+  position: relative;
+  overflow: hidden;
+  background: rgba(0, 210, 255, 0.1);
+  border: 1px solid var(--primary-color);
+  transition: all 0.3s ease;
+}
+
+.btn-shimmer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(90deg,
+      transparent,
+      rgba(255, 255, 255, 0.2),
+      transparent);
+  transform: skewX(-20deg);
+  animation: shimmer-sweep 3s infinite linear;
+}
+
+.btn-shimmer:hover {
+  box-shadow: 0 0 15px var(--primary-glow);
+  transform: translateY(-2px);
+}
+
+@keyframes shimmer-sweep {
+  0% {
+    left: -100%;
+  }
+
+  20% {
+    left: 200%;
+  }
+
+  100% {
+    left: 200%;
+  }
+}
+
+/* Card Glow Border (Realistic/Subtle) */
+.card-glow {
+  position: relative;
+  transition: all 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+}
+
+.card-glow:hover {
+  box-shadow:
+    0 10px 30px -5px rgba(0, 210, 255, 0.15),
+    0 8px 10px -6px rgba(0, 210, 255, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transform: translateY(-2px);
+  border-color: rgba(0, 210, 255, 0.3);
+}
+
+/* --- Advanced Premium Animations (Internet Inspired) --- */
+
+/* 1. Animated Gradient Mesh Background */
+.bg-mesh-animated {
+  background:
+    radial-gradient(circle at top left, rgba(0, 210, 255, 0.08) 0%, transparent 50%),
+    radial-gradient(circle at bottom right, rgba(99, 102, 241, 0.08) 0%, transparent 50%);
+  background-size: 200% 200%;
+  animation: meshFlow 8s ease infinite alternate;
+}
+
+@keyframes meshFlow {
+  0% {
+    background-position: 0% 0%;
+  }
+
+  100% {
+    background-position: 100% 100%;
+  }
+}
+
+/* 2. Ambient Edge Glow (Realistic Premium) */
+.border-spin-premium {
+  position: relative;
+  border-radius: inherit;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05),
+    0 0 0 1px rgba(0, 210, 255, 0.05);
+  transition: all 0.5s ease;
+  z-index: 1;
+}
+
+.border-spin-premium::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  background: linear-gradient(to bottom right,
+      rgba(0, 210, 255, 0.4) 0%,
+      transparent 30%,
+      transparent 70%,
+      rgba(99, 102, 241, 0.4) 100%);
+  z-index: -1;
+  opacity: 0.3;
+  transition: opacity 0.5s ease;
+  filter: blur(8px);
+  animation: ambientBreathe 6s ease-in-out infinite alternate;
+}
+
+.border-spin-premium:hover {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1),
+    0 0 0 1px rgba(0, 210, 255, 0.2);
+}
+
+.border-spin-premium:hover::before {
+  opacity: 0.8;
+  filter: blur(14px);
+}
+
+@keyframes ambientBreathe {
+  0% {
+    opacity: 0.2;
+    transform: scale(0.99);
+  }
+
+  100% {
+    opacity: 0.5;
+    transform: scale(1.02);
+  }
+}
+
+/* 3. Neon Text Glitch / Pulse */
+.text-neon-pulse {
+  color: #fff;
+  text-shadow:
+    0 0 5px #fff,
+    0 0 10px #fff,
+    0 0 20px var(--primary-color),
+    0 0 40px var(--primary-color);
+  animation: neonFlicker 2s infinite alternate;
+}
+
+@keyframes neonFlicker {
+
+  0%,
+  19%,
+  21%,
+  23%,
+  25%,
+  54%,
+  56%,
+  100% {
+    opacity: 1;
+    text-shadow: 0 0 10px var(--primary-color), 0 0 20px var(--primary-color);
+  }
+
+  20%,
+  24%,
+  55% {
+    opacity: 0.8;
+    text-shadow: none;
+  }
+}
+
+/* 4. Hover Lift & Glow Strong */
+.hover-lift-glow {
+  transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.hover-lift-glow:hover {
+  transform: translateY(-8px) scale(1.02);
+  box-shadow: 0 15px 30px rgba(0, 210, 255, 0.2), 0 0 20px rgba(0, 210, 255, 0.4);
+  border-color: rgba(0, 210, 255, 0.6);
+  z-index: 10;
+}
+
+/* --- Vital Card Animated Edge Glow (from screenshot) --- */
+.vital-card-edge-glow {
+  position: relative;
+  overflow: hidden;
+}
+
+.vital-card-edge-glow::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: var(--card-color, var(--primary-color));
+  box-shadow:
+    0 0 15px 2px var(--card-color, var(--primary-color)),
+    inset 0 2px 5px var(--card-color, var(--primary-color));
+  z-index: 2;
+  animation: neonEdgePulse 1.5s ease-in-out infinite alternate;
+}
+
+.vital-card-edge-glow::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 50%;
+  height: 4px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8), transparent);
+  animation: glowingLineSweep 3s infinite linear;
+  z-index: 3;
+}
+
+@keyframes neonEdgePulse {
+  0% {
+    opacity: 0.7;
+    filter: brightness(0.8);
+  }
+
+  100% {
+    opacity: 1;
+    filter: brightness(1.2) saturate(1.2);
+  }
+}
+
+@keyframes glowingLineSweep {
+  0% {
+    left: -100%;
+  }
+
+  100% {
+    left: 200%;
+  }
+}
