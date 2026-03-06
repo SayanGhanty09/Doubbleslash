@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
     Terminal,
@@ -8,30 +8,54 @@ import {
     RefreshCw,
     AlertTriangle,
     Zap,
-    Cpu
+    Cpu,
+    Bluetooth,
+    BluetoothOff,
+    Loader2
 } from 'lucide-react';
+import { useBLE, BLEStatus } from '../contexts/BLEContext';
 
 const DeviceConsole: React.FC = () => {
-    const [logs, setLogs] = useState<string[]>([
-        "[SYSTEM] REBOOT SUCCESSFUL (v1.2.0)",
-        "[BLE] SCANNING FOR PERIPHERALS...",
-        "[BLE] CONNECTED TO ESP32-MEDICAL-V1",
-        "[DATA] STREAM READY: GAIN=2, OFFSET=10",
-    ]);
+    const { status, logs, connect, disconnect, sendCommand, clearLogs } = useBLE();
     const [input, setInput] = useState("");
     const [isUpdating, setIsUpdating] = useState(false);
+    const scrollRef = useRef<HTMLDivElement>(null);
 
-    const handleSend = () => {
-        if (!input) return;
-        setLogs(prev => [...prev, `> ${input}`, `[CMD] EXECUTING: ${input.toUpperCase()}...`, `[SYSTEM] OK`]);
-        setInput("");
+    const isConnected = status === BLEStatus.CONNECTED ||
+        status === BLEStatus.SCANNING_40HZ ||
+        status === BLEStatus.SCANNING_200HZ ||
+        status === BLEStatus.FINISHED;
+
+    const isConnecting = status === BLEStatus.CONNECTING;
+
+    useEffect(() => {
+        if (scrollRef.current) {
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+    }, [logs]);
+
+    const handleSend = async () => {
+        if (!input || !isConnected) return;
+
+        // Basic mapping for demo/manual commands
+        const cmdMap: Record<string, number> = {
+            "START_40": 0x01,
+            "START_200": 0x03,
+            "STOP": 0x02,
+        };
+
+        const cmd = cmdMap[input.toUpperCase()] || parseInt(input, 16);
+
+        if (!isNaN(cmd)) {
+            await sendCommand(cmd);
+            setInput("");
+        }
     };
 
     const handleUpdate = () => {
         setIsUpdating(true);
         setTimeout(() => {
             setIsUpdating(false);
-            setLogs(prev => [...prev, "[OTA] FIRMWARE UPDATE SUCCESSFUL. REBOOTING..."]);
         }, 3000);
     };
 
@@ -42,9 +66,38 @@ const DeviceConsole: React.FC = () => {
             className="page-transition bg-mesh-animated"
             style={{ display: 'flex', flexDirection: 'column', gap: '24px', height: '100%', borderRadius: '24px', padding: '12px' }}
         >
-            <header style={{ marginBottom: '40px' }}>
-                <h1 className="glowing-heading" style={{ fontSize: '1.5rem', fontWeight: 700 }}>Device Console</h1>
-                <p style={{ color: 'var(--text-secondary)', marginTop: '8px' }}>Advanced hardware management and low-level debugging.</p>
+            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '40px' }}>
+                <div>
+                    <h1 className="glowing-heading" style={{ fontSize: '1.5rem', fontWeight: 700 }}>Device Console</h1>
+                    <p style={{ color: 'var(--text-secondary)', marginTop: '8px' }}>Advanced hardware management and low-level debugging.</p>
+                </div>
+
+                <button
+                    onClick={isConnected ? disconnect : connect}
+                    disabled={isConnecting}
+                    className="glass"
+                    style={{
+                        padding: '12px 24px',
+                        borderRadius: '12px',
+                        background: isConnected ? 'rgba(239, 68, 68, 0.1)' : 'rgba(0, 210, 255, 0.1)',
+                        color: isConnected ? '#ef4444' : 'var(--primary-color)',
+                        border: `1px solid ${isConnected ? 'rgba(239, 68, 68, 0.2)' : 'var(--border-color)'}`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        fontWeight: 700,
+                        cursor: 'pointer'
+                    }}
+                >
+                    {isConnecting ? (
+                        <Loader2 className="animate-spin" size={20} />
+                    ) : isConnected ? (
+                        <BluetoothOff size={20} />
+                    ) : (
+                        <Bluetooth size={20} />
+                    )}
+                    {isConnecting ? 'CONNECTING...' : isConnected ? 'DISCONNECT' : 'CONNECT DEVICE'}
+                </button>
             </header>
 
             <div style={{ display: 'grid', gridTemplateColumns: '350px 1fr', gap: '24px', flex: 1 }}>
@@ -57,28 +110,23 @@ const DeviceConsole: React.FC = () => {
 
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Status</span>
+                                <span style={{
+                                    fontWeight: 600,
+                                    color: isConnected ? 'var(--success-color)' : 'var(--error-color)',
+                                    textTransform: 'uppercase',
+                                    fontSize: '0.85rem'
+                                }}>
+                                    {isConnected ? 'ONLINE' : 'OFFLINE'}
+                                </span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Current Version</span>
                                 <span style={{ fontWeight: 600, fontFamily: 'Roboto Mono' }}>v1.2.0</span>
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Build Date</span>
                                 <span style={{ fontWeight: 500 }}>2024-05-15</span>
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>UUID</span>
-                                <span style={{ fontWeight: 500, fontFamily: 'Roboto Mono', fontSize: '0.75rem' }}>a1b2c3d4-e5f6-7890</span>
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>NUS</span>
-                                <span style={{ fontWeight: 500, fontFamily: 'Roboto Mono', fontSize: '0.75rem' }}>6E400001-B5A3-F393</span>
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>MAC Address</span>
-                                <span style={{ fontWeight: 500, fontFamily: 'Roboto Mono', fontSize: '0.75rem' }}>A4:CF:12:8E:3B:01</span>
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>ESP32 Rev</span>
-                                <span style={{ fontWeight: 500, fontFamily: 'Roboto Mono' }}>Rev 3.1</span>
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Model No</span>
@@ -92,30 +140,16 @@ const DeviceConsole: React.FC = () => {
                                 <div style={{ fontSize: '0.8rem', color: 'var(--success-color)' }}>System is up to date</div>
                             </div>
 
-                            {isUpdating && (
-                                <div style={{ marginTop: '10px' }}>
-                                    <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px', overflow: 'hidden' }}>
-                                        <motion.div
-                                            initial={{ x: '-100%' }}
-                                            animate={{ x: '100%' }}
-                                            transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}
-                                            style={{ width: '50%', height: '100%', background: 'var(--primary-color)' }}
-                                        />
-                                    </div>
-                                    <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', marginTop: '4px' }}>Uploading...</div>
-                                </div>
-                            )}
-
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
                                 <button
                                     onClick={handleUpdate}
-                                    disabled={isUpdating}
+                                    disabled={isUpdating || !isConnected}
                                     className="glass btn-shimmer"
-                                    style={{ width: '100%', padding: '12px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer', fontWeight: 600, color: 'var(--primary-color)' }}
+                                    style={{ width: '100%', padding: '12px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer', fontWeight: 600, color: 'var(--primary-color)', opacity: !isConnected ? 0.5 : 1 }}
                                 >
                                     <Upload size={18} /> Upload Firmware (.bin)
                                 </button>
-                                <button style={{ width: '100%', padding: '12px', borderRadius: '10px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer', fontWeight: 600 }}>
+                                <button disabled={!isConnected} style={{ width: '100%', padding: '12px', borderRadius: '10px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer', fontWeight: 600, opacity: !isConnected ? 0.5 : 1 }}>
                                     Check for Updates
                                 </button>
                             </div>
@@ -127,7 +161,7 @@ const DeviceConsole: React.FC = () => {
                             <AlertTriangle size={20} /> Advanced Tools
                         </h3>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                            <button style={{ width: '100%', padding: '10px', borderRadius: '10px', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.2)', cursor: 'pointer', fontWeight: 600 }}>
+                            <button disabled={!isConnected} style={{ width: '100%', padding: '10px', borderRadius: '10px', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.2)', cursor: 'pointer', fontWeight: 600, opacity: !isConnected ? 0.5 : 1 }}>
                                 Factory Reset Device
                             </button>
                         </div>
@@ -142,20 +176,24 @@ const DeviceConsole: React.FC = () => {
                             <span style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>SERIAL TERMINAL LOGS</span>
                         </div>
                         <div style={{ display: 'flex', gap: '12px' }}>
-                            <button onClick={() => setLogs([])} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer' }}><Trash2 size={16} /></button>
+                            <button onClick={clearLogs} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer' }}><Trash2 size={16} /></button>
                             <div style={{ width: 1, height: 16, background: 'var(--border-color)' }}></div>
-                            <span style={{ fontSize: '0.75rem', color: 'var(--success-color)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                <Zap size={14} fill="var(--success-color)" /> ACTIVE
+                            <span style={{ fontSize: '0.75rem', color: isConnected ? 'var(--success-color)' : 'var(--error-color)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <Zap size={14} fill={isConnected ? "var(--success-color)" : "transparent"} /> {isConnected ? 'ACTIVE' : 'IDLE'}
                             </span>
                         </div>
                     </div>
 
-                    <div style={{ flex: 1, padding: '20px', fontFamily: 'Roboto Mono', fontSize: '0.85rem', color: 'var(--text-primary)', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div
+                        ref={scrollRef}
+                        style={{ flex: 1, padding: '20px', fontFamily: 'Roboto Mono', fontSize: '0.85rem', color: 'var(--text-primary)', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}
+                    >
                         {logs.map((log, idx) => (
                             <div key={idx} style={{
                                 color: log.startsWith('>') ? 'var(--primary-color)' :
-                                    log.includes('[SYSTEM]') ? 'var(--success-color)' :
-                                        log.includes('[BLE]') ? '#4f46e5' : 'inherit'
+                                    log.includes('[ERROR]') ? 'var(--error-color)' :
+                                        log.includes('[SUCCESS]') ? 'var(--success-color)' :
+                                            log.includes('[BLE]') ? '#4f46e5' : 'inherit'
                             }}>
                                 <span style={{ opacity: 0.3, marginRight: '8px' }}>[{idx.toString().padStart(3, '0')}]</span>
                                 {log}
@@ -166,15 +204,17 @@ const DeviceConsole: React.FC = () => {
                     <div style={{ padding: '20px', background: 'rgba(0,0,0,0.2)', borderTop: '1px solid var(--border-color)', display: 'flex', gap: '12px' }}>
                         <input
                             type="text"
-                            placeholder="Enter command (e.g. SET_GAIN=4, RESET)..."
+                            placeholder={isConnected ? "Enter command (e.g. START_40, STOP)..." : "Connect device to send commands..."}
                             value={input}
+                            disabled={!isConnected}
                             onChange={(e) => setInput(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                            style={{ flex: 1, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '12px 16px', color: 'white', fontFamily: 'Roboto Mono', outline: 'none' }}
+                            style={{ flex: 1, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '12px 16px', color: 'white', fontFamily: 'Roboto Mono', outline: 'none', opacity: !isConnected ? 0.5 : 1 }}
                         />
                         <button
                             onClick={handleSend}
-                            style={{ background: 'var(--primary-color)', border: 'none', borderRadius: '10px', width: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                            disabled={!isConnected}
+                            style={{ background: 'var(--primary-color)', border: 'none', borderRadius: '10px', width: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', opacity: !isConnected ? 0.5 : 1 }}>
                             <Send size={20} color="black" />
                         </button>
                     </div>

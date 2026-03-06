@@ -16,6 +16,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import StarBackground from '../visuals/StarBackground';
 import SplineBackground from '../visuals/SplineBackground';
 
+import { BLEProvider, useBLE, BLEStatus } from '../../contexts/BLEContext';
+
 // Mock Patient Context
 const PatientContext = createContext<{
   activePatient: string | null;
@@ -54,12 +56,9 @@ const SidebarItem: React.FC<{ item: any, index: number }> = ({ item, index }) =>
           color: isActive ? '#000' : 'var(--text-secondary)',
           fontWeight: isActive ? 700 : 500,
           transition: 'background 0.3s cubic-bezier(0.4, 0, 0.2, 1), color 0.3s ease',
-
-          // Claymorphic / 3D Effect
           boxShadow: isActive
-            ? 'inset 0 2px 4px rgba(255,255,255,0.3), 0 2px 0px rgba(0, 150, 200, 1), 0 4px 10px rgba(0, 210, 255, 0.3)' // "Pressed" blue
-            : '0 4px 0px rgba(0,0,0,0.3), 0 8px 15px rgba(0,0,0,0.2)', // Elevated dark
-
+            ? 'inset 0 2px 4px rgba(255,255,255,0.3), 0 2px 0px rgba(0, 150, 200, 1), 0 4px 10px rgba(0, 210, 255, 0.3)'
+            : '0 4px 0px rgba(0,0,0,0.3), 0 8px 15px rgba(0,0,0,0.2)',
           border: isActive ? 'none' : '1px solid rgba(255,255,255,0.05)',
           transform: isActive ? 'translateY(2px)' : 'translateY(0)',
           cursor: 'pointer'
@@ -74,9 +73,14 @@ const SidebarItem: React.FC<{ item: any, index: number }> = ({ item, index }) =>
   );
 };
 
-const Shell: React.FC = () => {
+const ShellContent: React.FC = () => {
   const [activePatient, setActivePatient] = useState<string | null>("John Doe");
-  const [hwStatus] = useState<'connected' | 'disconnected' | 'syncing'>('connected');
+  const { status } = useBLE();
+
+  const isConnected = status === BLEStatus.CONNECTED ||
+    status === BLEStatus.SCANNING_40HZ ||
+    status === BLEStatus.SCANNING_200HZ ||
+    status === BLEStatus.FINISHED;
 
   const menuItems = [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
@@ -187,9 +191,9 @@ const Shell: React.FC = () => {
                 border: '1px solid var(--border-color)',
                 boxShadow: '0 2px 5px rgba(0,0,0,0.1)'
               }}>
-                {hwStatus === 'connected' ? <Bluetooth size={16} color="var(--success-color)" /> : <BluetoothOff size={16} color="var(--error-color)" />}
-                <span style={{ textTransform: 'capitalize', color: hwStatus === 'connected' ? 'var(--success-color)' : 'var(--error-color)', fontWeight: 600 }}>
-                  {hwStatus}
+                {isConnected ? <Bluetooth size={16} color="var(--success-color)" /> : <BluetoothOff size={16} color="var(--error-color)" />}
+                <span style={{ textTransform: 'capitalize', color: isConnected ? 'var(--success-color)' : 'var(--error-color)', fontWeight: 600 }}>
+                  {isConnected ? 'Connected' : 'Disconnected'}
                 </span>
               </div>
               <div style={{ width: 1, height: 24, background: 'var(--border-color)' }}></div>
@@ -208,6 +212,14 @@ const Shell: React.FC = () => {
         </main>
       </div>
     </PatientContext.Provider>
+  );
+};
+
+const Shell: React.FC = () => {
+  return (
+    <BLEProvider>
+      <ShellContent />
+    </BLEProvider>
   );
 };
 

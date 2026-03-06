@@ -1,66 +1,39 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import {
     Heart,
     Wind,
-    Activity,
+    Activity as ActivityIcon,
     Droplets,
     Square,
     AlertCircle,
-    Brain
+    Brain,
+    Loader2
 } from 'lucide-react';
-import { ResponsiveContainer, LineChart, Line, YAxis, XAxis, CartesianGrid } from 'recharts';
 import { usePatient } from '../components/layout/Shell';
 import VitalsScalePanel from '../components/dashboard/VitalsScalePanel';
+import { useBLE, BLEStatus } from '../contexts/BLEContext';
 
 const LiveRecording: React.FC = () => {
     const { activePatient } = usePatient();
-    const [isRecording, setIsRecording] = useState(true);
+    const { status, waveform, biomarkers, sendCommand } = useBLE();
     const [seconds, setSeconds] = useState(0);
-    const [vitals, setVitals] = useState({
-        hr: 72,
-        spo2: 98,
-        rr: 16,
-        bp: { sys: 120, dia: 80 },
-        bilirubin: 0.8
-    });
 
-    // Simulated Waveform Data
-    const [data, setData] = useState(() => {
-        return Array.from({ length: 40 }, (_, i) => ({
-            time: i,
-            val: 50 + Math.sin(i * 0.5) * 20 + Math.random() * 5
-        }));
-    });
+    const isConnected = status !== BLEStatus.DISCONNECTED && status !== BLEStatus.CONNECTING;
+    const isRecording = status === BLEStatus.SCANNING_40HZ || status === BLEStatus.SCANNING_200HZ;
+    const isFinished = status === BLEStatus.FINISHED;
 
     useEffect(() => {
-        if (!isRecording) return;
-
-        const interval = setInterval(() => {
-            setSeconds(s => s + 1);
-
-            // Update Vitals slightly
-            setVitals(v => ({
-                ...v,
-                hr: Math.max(60, Math.min(100, v.hr + (Math.random() - 0.5) * 2)),
-                spo2: Math.max(95, Math.min(100, v.spo2 + (Math.random() - 0.5) * 0.5)),
-                rr: Math.max(12, Math.min(20, v.rr + (Math.random() - 0.5) * 1)),
-            }));
-
-            // Update Waveform
-            setData(prev => {
-                const next = [...prev.slice(1)];
-                const lastIdx = prev[prev.length - 1].time;
-                next.push({
-                    time: lastIdx + 1,
-                    val: 50 + Math.sin((lastIdx + 1) * 0.5) * 20 + Math.random() * 5
-                });
-                return next;
-            });
-        }, 1000);
-
+        let interval: any;
+        if (isRecording) {
+            interval = setInterval(() => {
+                setSeconds(s => s + 1);
+            }, 1000);
+        } else if (!isFinished) {
+            setSeconds(0);
+        }
         return () => clearInterval(interval);
-    }, [isRecording]);
+    }, [isRecording, isFinished]);
 
     const formatTime = (s: number) => {
         const mins = Math.floor(s / 60);
@@ -68,12 +41,34 @@ const LiveRecording: React.FC = () => {
         return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     };
 
-    const vitalCards = [
-        { label: 'Heart Rate', value: vitals.hr.toFixed(0), unit: 'bpm', icon: Heart, color: '#ef4444', glow: 'rgba(239, 68, 68, 0.3)' },
-        { label: 'SpO2', value: vitals.spo2.toFixed(1), unit: '%', icon: Droplets, color: '#00d2ff', glow: 'rgba(0, 210, 255, 0.3)' },
-        { label: 'Resp. Rate', value: vitals.rr.toFixed(0), unit: 'rpm', icon: Wind, color: '#10b981', glow: 'rgba(16, 185, 129, 0.3)' },
-        { label: 'Blood Pressure', value: `${vitals.bp.sys}/${vitals.bp.dia}`, unit: 'mmHg', icon: Activity, color: '#f59e0b', glow: 'rgba(245, 158, 11, 0.3)' },
-    ];
+    const handleToggleRecording = async () => {
+        if (isRecording) {
+            await sendCommand(0x02); // Stop
+        } else {
+            await sendCommand(0x01); // Start 40Hz
+        }
+    };
+
+    const vitalCards = useMemo(() => {
+        const baseCards = [
+            { label: 'Heart Rate', value: biomarkers?.hr ? biomarkers.hr.toFixed(0) : '--', unit: 'bpm', icon: Heart, color: '#ef4444' },
+            { label: 'SpO2', value: biomarkers?.spo2 ? biomarkers.spo2.toFixed(1) : '--', unit: '%', icon: Droplets, color: '#00d2ff' },
+        ];
+
+        if (status === BLEStatus.SCANNING_200HZ || biomarkers?.bpSys) {
+            return [
+                ...baseCards,
+                { label: 'Blood Pressure', value: biomarkers?.bpSys ? `${biomarkers.bpSys}/${biomarkers.bpDia}` : '--', unit: 'mmHg', icon: ActivityIcon, color: '#f59e0b' },
+                { label: 'Resp. Rate', value: biomarkers?.respRate || '--', unit: 'bpm', icon: Wind, color: '#10b981' },
+            ];
+        }
+
+        return [
+            ...baseCards,
+            { label: 'Bilirubin', value: biomarkers?.bilirubin ? biomarkers.bilirubin.toFixed(2) : '--', unit: 'mg/dL', icon: ActivityIcon, color: '#f59e0b' },
+            { label: 'Stress Index', value: biomarkers?.stress || '--', unit: '', icon: Brain, color: '#10b981' },
+        ];
+    }, [biomarkers, status]);
 
     return (
         <motion.div
@@ -85,7 +80,8 @@ const LiveRecording: React.FC = () => {
             <header style={{ marginBottom: '40px' }}>
                 <h1 className="glowing-heading" style={{ fontSize: '1.5rem', fontWeight: 700 }}>Live Monitoring</h1>
                 <p style={{ color: 'var(--text-secondary)', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span className="status-dot"></span> Real-time telemetry and clinical observation.
+                    <span className={`status-dot ${isConnected ? 'active' : ''}`}></span>
+                    {isConnected ? 'Device connected. Ready for recording.' : 'Device disconnected. Please connect in Console.'}
                 </p>
             </header>
 
@@ -109,25 +105,51 @@ const LiveRecording: React.FC = () => {
                     </div>
                 </div>
 
-                <button
-                    onClick={() => setIsRecording(!isRecording)}
-                    className={!isRecording ? 'btn-shimmer' : ''}
-                    style={{
-                        padding: '12px 24px',
-                        borderRadius: '12px',
-                        background: isRecording ? 'rgba(239, 68, 68, 0.1)' : 'var(--primary-color)',
-                        color: isRecording ? '#ef4444' : 'black',
-                        border: `1px solid ${isRecording ? '#ef4444' : 'transparent'}`,
-                        fontWeight: 700,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        cursor: 'pointer',
-                        transition: '0.2s'
-                    }}
-                >
-                    {isRecording ? <><Square size={18} fill="#ef4444" /> STOP RECORDING</> : <><Activity size={18} /> START RECORDING</>}
-                </button>
+                <div style={{ display: 'flex', gap: '12px' }}>
+                    {isFinished && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 20px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.1)', color: 'var(--success-color)', fontWeight: 600 }}>
+                            <ActivityIcon size={18} /> SCAN COMPLETE
+                        </div>
+                    )}
+                    <button
+                        onClick={handleToggleRecording}
+                        disabled={!isConnected}
+                        className={!isRecording && isConnected ? 'btn-shimmer' : ''}
+                        style={{
+                            padding: '12px 24px',
+                            borderRadius: '12px',
+                            background: isRecording ? 'rgba(239, 68, 68, 0.1)' : 'var(--primary-color)',
+                            color: isRecording ? '#ef4444' : 'black',
+                            border: `1px solid ${isRecording ? '#ef4444' : 'transparent'}`,
+                            fontWeight: 700,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            cursor: isConnected ? 'pointer' : 'not-allowed',
+                            transition: '0.2s',
+                            opacity: isConnected ? 1 : 0.5
+                        }}
+                    >
+                        {isRecording ? <><Square size={18} fill="#ef4444" /> STOP RECORDING</> : <><ActivityIcon size={18} /> START 40HZ SCAN</>}
+                    </button>
+                    {!isRecording && isConnected && (
+                        <button
+                            onClick={() => sendCommand(0x03)}
+                            className="glass"
+                            style={{
+                                padding: '12px 24px',
+                                borderRadius: '12px',
+                                background: 'rgba(255,255,255,0.05)',
+                                color: 'white',
+                                border: '1px solid var(--border-color)',
+                                fontWeight: 600,
+                                cursor: 'pointer'
+                            }}
+                        >
+                            START 200HZ HRV
+                        </button>
+                    )}
+                </div>
             </div>
 
             {/* Main Monitoring Grid */}
@@ -166,45 +188,75 @@ const LiveRecording: React.FC = () => {
                 transition={{ delay: 0.4, type: 'spring', stiffness: 80 }}
                 style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '24px', flex: 1 }}
             >
-                {/* Replaced ECG with new Vitals Panel */}
-                <VitalsScalePanel />
+                {/* Real-time Waveform Panel */}
+                <div className="glass" style={{ padding: '24px', borderRadius: '24px', display: 'flex', flexDirection: 'column' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                        <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem', color: 'var(--text-tertiary)' }}>
+                            <ActivityIcon size={18} color="var(--primary-color)" /> LIVE WAVEFORM STREAM
+                        </h4>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', fontFamily: 'Roboto Mono' }}>
+                            {status === BLEStatus.SCANNING_200HZ ? '200Hz' : isRecording ? '40Hz' : 'IDLE'}
+                        </div>
+                    </div>
+                    <div style={{ flex: 1, minHeight: '300px' }}>
+                        {/* waveformData passed to panel for visualization */}
+                        <VitalsScalePanel waveformData={waveform} />
+                    </div>
+                </div>
 
                 {/* Secondary Metrics container */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                     <div className="glass" style={{ padding: '24px', borderRadius: '24px', background: 'linear-gradient(135deg, rgba(79, 70, 229, 0.1) 0%, rgba(0, 210, 255, 0.05) 100%)' }}>
                         <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem', color: 'var(--text-tertiary)', marginBottom: '16px' }}>
                             <Brain size={18} color="var(--primary-color)" />
-                            AI PREDICTION
+                            BIOMARKER STATUS
                         </h4>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                <div style={{ color: 'var(--success-color)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <Activity size={20} /> NORMAL SINUS RHYTHM
+                                <div style={{ color: isFinished ? 'var(--success-color)' : 'var(--primary-color)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    {isRecording ? <Loader2 size={18} className="animate-spin" /> : isFinished ? <ActivityIcon size={20} /> : <Square size={18} />}
+                                    {isRecording ? 'ANALYZING STREAM...' : isFinished ? 'SCAN SUCCESSFUL' : 'READY TO START'}
                                 </div>
                             </div>
                             <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                Analysis suggests stable rhythm patterns with no acute irregularities detected in the last 2 minutes of recording.
+                                {isRecording ? 'Detecting biomarkers from live telemetry. Please keep the patient still for optimal readings.' :
+                                    isFinished ? 'Biomarker analysis complete. Results synchronized to history.' :
+                                        'Waiting for device activation to begin biomarker extraction.'}
                             </p>
                         </div>
                     </div>
 
                     <div className="glass" style={{ padding: '24px', borderRadius: '24px', flex: 1 }}>
-                        <h4 style={{ fontSize: '0.9rem', color: 'var(--text-tertiary)', marginBottom: '20px' }}>SECONDARY LOGS</h4>
+                        <h4 style={{ fontSize: '0.9rem', color: 'var(--text-tertiary)', marginBottom: '20px' }}>CLINICAL INDICES</h4>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                             <div>
-                                <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '4px' }}>Bilirubin Index</div>
-                                <div style={{ fontSize: '1.5rem', fontWeight: 600 }}>0.8 <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>mg/dL</span></div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '4px' }}>HRV Status (Stress)</div>
+                                <div style={{ fontSize: '1.5rem', fontWeight: 600 }}>{biomarkers?.stress || '--'}</div>
                             </div>
+                            {biomarkers?.sdnn && (
+                                <div style={{ display: 'flex', gap: '20px' }}>
+                                    <div>
+                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '4px' }}>SDNN</div>
+                                        <div style={{ fontSize: '1.25rem', fontWeight: 600 }}>{biomarkers.sdnn} <span style={{ fontSize: '0.8rem' }}>ms</span></div>
+                                    </div>
+                                    <div>
+                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '4px' }}>RMSSD</div>
+                                        <div style={{ fontSize: '1.25rem', fontWeight: 600 }}>{biomarkers.rmssd} <span style={{ fontSize: '0.8rem' }}>ms</span></div>
+                                    </div>
+                                </div>
+                            )}
                             <div>
-                                <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '4px' }}>Stress Detection</div>
-                                <div style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--success-color)' }}>LOW</div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '4px' }}>Spo2 Level</div>
+                                <div style={{ fontSize: '1.25rem', fontWeight: 600, color: (biomarkers?.spo2 || 0) > 95 ? 'var(--success-color)' : 'var(--warning-color)' }}>
+                                    {biomarkers?.spo2 ? `${biomarkers.spo2.toFixed(1)}%` : '--'}
+                                </div>
                             </div>
                         </div>
 
-                        <div style={{ marginTop: 'auto', padding: '16px', borderRadius: '12px', background: 'rgba(239, 68, 68, 0.05)', border: '1px solid rgba(239, 68, 68, 0.2)', display: 'flex', gap: '12px' }}>
-                            <AlertCircle color="#ef4444" size={20} />
-                            <div style={{ fontSize: '0.8rem', color: '#ef4444' }}>
-                                Stable recording. No alerts active.
+                        <div style={{ marginTop: 'auto', padding: '16px', borderRadius: '12px', background: isRecording ? 'rgba(0, 210, 255, 0.05)' : 'rgba(239, 68, 68, 0.05)', border: `1px solid ${isRecording ? 'var(--border-color)' : 'rgba(239, 68, 68, 0.2)'}`, display: 'flex', gap: '12px' }}>
+                            {isRecording ? <ActivityIcon color="var(--primary-color)" size={20} /> : <AlertCircle color="#ef4444" size={20} />}
+                            <div style={{ fontSize: '0.8rem', color: isRecording ? 'var(--text-secondary)' : '#ef4444' }}>
+                                {isRecording ? 'Recording in progress...' : 'Monitoring inactive.'}
                             </div>
                         </div>
                     </div>
@@ -216,6 +268,10 @@ const LiveRecording: React.FC = () => {
           0% { opacity: 1; transform: scale(1); }
           50% { opacity: 0.5; transform: scale(1.1); }
           100% { opacity: 1; transform: scale(1); }
+        }
+        .status-dot.active {
+            background: var(--success-color);
+            box-shadow: 0 0 10px var(--success-color);
         }
       `}</style>
         </motion.div >
