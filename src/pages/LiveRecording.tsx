@@ -1,299 +1,427 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { motion } from 'framer-motion';
+import React, { useState, useEffect, useMemo } from "react";
+import { motion } from "framer-motion";
 import {
-    Heart,
-    Wind,
-    Activity as ActivityIcon,
-    Droplets,
-    FlaskConical,
-    Square,
-    AlertCircle,
-    Brain,
-    Loader2
-} from 'lucide-react';
-import { usePatient } from '../components/layout/Shell';
-import VitalsScalePanel from '../components/dashboard/VitalsScalePanel';
-import { useBLE, BLEStatus } from '../contexts/BLEContext';
+  Heart,
+  Wind,
+  Activity as ActivityIcon,
+  Droplets,
+  FlaskConical,
+  Brain,
+  Loader2,
+  FileText,
+  MessageSquare,
+  Send,
+  Mail
+} from "lucide-react";
+
+import VitalsScalePanel from "../components/dashboard/VitalsScalePanel";
+import { usePatient } from "../components/layout/Shell";
 
 const LiveRecording: React.FC = () => {
-    const { activePatient } = usePatient();
-    const { status, waveformSamples, biomarkers, sendCommand } = useBLE();
-    const [seconds, setSeconds] = useState(0);
+  const { activePatient } = usePatient();
 
-    const isConnected = status !== BLEStatus.DISCONNECTED && status !== BLEStatus.CONNECTING;
-    const isRecording = status === BLEStatus.SCANNING_40HZ || status === BLEStatus.SCANNING_200HZ;
-    const isFinished = status === BLEStatus.FINISHED;
+  // ======================
+  // State
+  // ======================
+  const [biomarkers, setBiomarkers] = useState<any>(null);
+  const [waveformSamples, setWaveformSamples] = useState<any[]>([]);
+  const [seconds, setSeconds] = useState(0);
 
-    // Use a ref so the interval callback always sees the latest status without
-    // needing to be in the dependency array (avoids restarting the interval on
-    // every status tick).
-    const statusRef = useRef(status);
-    useEffect(() => { statusRef.current = status; });
+  const [analysisResult, setAnalysisResult] = useState<any>(null);
+  const [reportId, setReportId] = useState("");
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-    useEffect(() => {
-        let interval: ReturnType<typeof setInterval> | undefined;
-        if (isRecording) {
-            interval = setInterval(() => {
-                setSeconds(prev => {
-                    const next = prev + 1;
-                    // Auto-stop at 30 s for 40 Hz scan if the device status
-                    // notification has not already arrived.
-                    if (next >= 30 && statusRef.current === BLEStatus.SCANNING_40HZ) {
-                        clearInterval(interval);
-                        sendCommand(0x02);
-                        return 30;
-                    }
-                    return next;
-                });
-            }, 1000);
-        } else if (!isFinished) {
-            setSeconds(0);
-        }
-        return () => clearInterval(interval);
-    }, [isRecording, isFinished, sendCommand]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatHistory, setChatHistory] = useState<any[]>([]);
+  const [isChatting, setIsChatting] = useState(false);
 
-    const formatTime = (s: number) => {
-        const mins = Math.floor(s / 60);
-        const secs = s % 60;
-        return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  // Email Modal State
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [emailForm, setEmailForm] = useState({ name: "", age: "", email: "" });
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+
+  // ======================
+  // Fetch Vitals & Timer
+  // ======================
+  useEffect(() => {
+    const fetchVitals = async () => {
+      try {
+        const res = await fetch("http://127.0.0.1:8000/vitals");
+        const data = await res.json();
+        setBiomarkers(data.biomarkers);
+        setWaveformSamples(data.waveform);
+      } catch (e) {
+        console.error("Vitals error", e);
+      }
     };
 
-    const handleToggleRecording = async () => {
-        if (isRecording) {
-            await sendCommand(0x02); // Stop
-        } else {
-            await sendCommand(0x01); // Start 40Hz
-        }
+    fetchVitals();
+    const interval = setInterval(fetchVitals, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setSeconds((prev) => prev + 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const formatTime = (s: number) => {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${m.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}`;
+  };
+
+  // ======================
+  // AI Report
+  // ======================
+  const generateAIReport = async () => {
+    if (!biomarkers) return;
+    setIsAnalyzing(true);
+
+    const payload = {
+      heartRate: Math.round(biomarkers.hr || 0),
+      bloodPreasure: Math.round(biomarkers.bpSys || 120),
+      spo2Level: biomarkers.spo2 || 0,
+      sdnn: biomarkers.sdnn || 0,
+      rmssd: biomarkers.rmssd || 0,
+      heamoglobin: biomarkers.hb || 0,
+      bilirubin: biomarkers.bilirubin || 0,
+      deviceId: "WEB_CLIENT",
+      patientName: activePatient || "Guest",
+      patientAge: 30,
+      sendEmail: false // We handle email via the popup now
     };
 
-    const vitalCards = useMemo(() => {
-        const baseCards = [
-            { label: 'Heart Rate', value: biomarkers?.hr ? biomarkers.hr.toFixed(0) : '--', unit: 'bpm', icon: Heart, color: '#ef4444' },
-            { label: 'SpO2', value: biomarkers?.spo2 ? biomarkers.spo2.toFixed(1) : '--', unit: '%', icon: Droplets, color: '#00d2ff' },
-        ];
+    try {
+      const res = await fetch("http://127.0.0.1:8000/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
 
-        if (status === BLEStatus.SCANNING_200HZ || biomarkers?.bpSys) {
-            return [
-                ...baseCards,
-                { label: 'Blood Pressure', value: biomarkers?.bpSys ? `${biomarkers.bpSys}/${biomarkers.bpDia}` : '--', unit: 'mmHg', icon: ActivityIcon, color: '#f59e0b' },
-                { label: 'Resp. Rate', value: biomarkers?.respRate || '--', unit: 'bpm', icon: Wind, color: '#10b981' },
-            ];
-        }
+      if (data.status === "success") {
+        setAnalysisResult(data.analysis);
+        setReportId(data.report_id);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    setIsAnalyzing(false);
+  };
 
-        return [
-            ...baseCards,
-            { label: 'Hemoglobin', value: biomarkers?.hb ? biomarkers.hb.toFixed(1) : '--', unit: 'g/dL', icon: FlaskConical, color: '#a855f7' },
-            { label: 'Bilirubin', value: biomarkers?.bilirubin ? biomarkers.bilirubin.toFixed(2) : '--', unit: 'mg/dL', icon: ActivityIcon, color: '#f59e0b' },
-            { label: 'Stress Index', value: biomarkers?.stress || '--', unit: '', icon: Brain, color: '#10b981' },
-        ];
-    }, [biomarkers, status]);
+  // ======================
+  // Send PDF via Email
+  // ======================
+  const triggerPdfEmail = async () => {
+    if (!emailForm.name || !emailForm.age || !emailForm.email) {
+      alert("Please fill in all fields.");
+      return;
+    }
 
-    return (
-        <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="page-transition bg-mesh-animated"
-            style={{ display: 'flex', flexDirection: 'column', gap: '24px', height: '100%', borderRadius: '24px', padding: '12px' }}
-        >
-            <header style={{ marginBottom: '40px' }}>
-                <h1 className="glowing-heading" style={{ fontSize: '1.5rem', fontWeight: 700 }}>Live Monitoring</h1>
-                <p style={{ color: 'var(--text-secondary)', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span className={`status-dot ${isConnected ? 'active' : ''}`}></span>
-                    {isConnected ? 'Device connected. Ready for recording.' : 'Device disconnected. Please connect in Console.'}
-                </p>
-            </header>
+    if (!reportId) {
+      alert("Please generate a report first.");
+      return;
+    }
 
-            {/* Session Header */}
-            <div className="glass" style={{ padding: '20px 24px', borderRadius: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
-                    <div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Patient Name</div>
-                        <div style={{ fontWeight: 600, fontSize: '1.25rem' }}>{activePatient || "No Active Patient"}</div>
-                    </div>
-                    <div style={{ width: 1, height: 40, background: 'var(--border-color)' }}></div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <div style={{
-                            width: 12,
-                            height: 12,
-                            borderRadius: '50%',
-                            background: isRecording ? '#ef4444' : 'var(--text-tertiary)',
-                            animation: isRecording ? 'pulse 1.5s infinite' : 'none'
-                        }}></div>
-                        <div style={{ fontFamily: 'Roboto Mono', fontSize: '1.5rem', fontWeight: 500 }}>{formatTime(seconds)}</div>
-                    </div>
-                </div>
+    setIsSendingEmail(true);
 
-                <div style={{ display: 'flex', gap: '12px' }}>
-                    {isFinished && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 20px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.1)', color: 'var(--success-color)', fontWeight: 600 }}>
-                            <ActivityIcon size={18} /> SCAN COMPLETE
-                        </div>
-                    )}
-                    <button
-                        onClick={handleToggleRecording}
-                        disabled={!isConnected}
-                        className={!isRecording && isConnected ? 'btn-shimmer' : ''}
-                        style={{
-                            padding: '12px 24px',
-                            borderRadius: '12px',
-                            background: isRecording ? 'rgba(239, 68, 68, 0.1)' : 'var(--primary-color)',
-                            color: isRecording ? '#ef4444' : 'black',
-                            border: `1px solid ${isRecording ? '#ef4444' : 'transparent'}`,
-                            fontWeight: 700,
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '8px',
-                            cursor: isConnected ? 'pointer' : 'not-allowed',
-                            transition: '0.2s',
-                            opacity: isConnected ? 1 : 0.5
-                        }}
-                    >
-                        {isRecording ? <><Square size={18} fill="#ef4444" /> STOP RECORDING</> : <><ActivityIcon size={18} /> START 40HZ SCAN</>}
-                    </button>
-                    {!isRecording && isConnected && (
-                        <button
-                            onClick={() => sendCommand(0x03)}
-                            className="glass"
-                            style={{
-                                padding: '12px 24px',
-                                borderRadius: '12px',
-                                background: 'rgba(255,255,255,0.05)',
-                                color: 'white',
-                                border: '1px solid var(--border-color)',
-                                fontWeight: 600,
-                                cursor: 'pointer'
-                            }}
-                        >
-                            START 200HZ HRV
-                        </button>
-                    )}
-                </div>
+    try {
+      const res = await fetch("http://127.0.0.1:8000/send-pdf/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          report_id: reportId,
+          patientName: emailForm.name,
+          patientAge: parseInt(emailForm.age),
+          patientEmail: emailForm.email
+        })
+      });
+
+      const data = await res.json();
+
+      if (data.status === "success") {
+        alert("PDF successfully sent to your email!");
+        setIsModalOpen(false);
+        setEmailForm({ name: "", age: "", email: "" });
+      } else {
+        alert("Failed to send: " + data.message);
+      }
+    } catch (e) {
+      console.error("Email error:", e);
+      alert("An error occurred while sending the email.");
+    }
+
+    setIsSendingEmail(false);
+  };
+
+  // ======================
+  // Chat
+  // ======================
+  const sendMessage = async () => {
+    if (!chatInput.trim()) return;
+
+    if (!reportId) {
+      alert("Please generate an AI Report first so the assistant has your context.");
+      return;
+    }
+
+    const userMsg = { sender: "You", text: chatInput };
+    setChatHistory((prev) => [...prev, userMsg]);
+    setChatInput("");
+    setIsChatting(true);
+
+    try {
+      const res = await fetch("http://127.0.0.1:8000/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          report_id: reportId,
+          message: userMsg.text
+        })
+      });
+
+      const data = await res.json();
+
+      if (data.status === "success") {
+        setChatHistory((prev) => [
+          ...prev,
+          { sender: "AI Assistant", text: data.reply }
+        ]);
+      } else {
+        setChatHistory((prev) => [
+          ...prev,
+          { sender: "System", text: `Error: ${data.message || data.detail}` }
+        ]);
+      }
+    } catch (e) {
+      console.error(e);
+      setChatHistory((prev) => [
+        ...prev,
+        { sender: "System", text: "Network error. Make sure the backend is running." }
+      ]);
+    }
+
+    setIsChatting(false);
+  };
+
+  // ======================
+  // Vital Cards Data
+  // ======================
+  const vitalCards = useMemo(() => {
+    return [
+      { label: "Heart Rate", value: biomarkers?.hr || "--", unit: "bpm", icon: Heart, color: "#ef4444" },
+      { label: "SpO2", value: biomarkers?.spo2 || "--", unit: "%", icon: Droplets, color: "#00d2ff" },
+      { label: "Blood Pressure", value: biomarkers?.bpSys ? `${biomarkers.bpSys}/${biomarkers.bpDia}` : "--", unit: "mmHg", icon: ActivityIcon, color: "#f59e0b" },
+      { label: "Resp Rate", value: biomarkers?.respRate || "--", unit: "bpm", icon: Wind, color: "#10b981" },
+      { label: "Hemoglobin", value: biomarkers?.hb || "--", unit: "g/dL", icon: FlaskConical, color: "#a855f7" },
+      { label: "Bilirubin", value: biomarkers?.bilirubin || "--", unit: "mg/dL", icon: ActivityIcon, color: "#f59e0b" },
+      { label: "Stress", value: biomarkers?.stress || "--", unit: "", icon: Brain, color: "#10b981" }
+    ];
+  }, [biomarkers]);
+
+  // ======================
+  // UI Render
+  // ======================
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ padding: 20, fontFamily: "sans-serif" }}>
+      
+      {/* HEADER */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <h1>Live Monitoring</h1>
+        <p style={{ fontWeight: "bold", color: "#555" }}>
+          Patient: {activePatient || "Guest"} | Time: {formatTime(seconds)}
+        </p>
+      </div>
+
+      {/* VITAL CARDS */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 20, marginBottom: 30 }}>
+        {vitalCards.map((card, i) => {
+          const Icon = card.icon;
+          return (
+            <div key={i} style={{ padding: 20, border: "1px solid #3a2a5d", borderRadius: 12, backgroundColor: "#564a74", boxShadow: "0 2px 4px rgba(0,0,0,0.05)" }}>
+              <Icon color={card.color} size={24} style={{ marginBottom: 10 }} />
+              <h2 style={{ margin: "5px 0", fontSize: "1.5rem" }}>{card.value}</h2>
+              <p style={{ margin: 0, color: "#ffff", fontSize: "0.9rem" }}>{card.label} ({card.unit})</p>
             </div>
+          );
+        })}
+      </div>
 
-            {/* Main Monitoring Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: '20px' }}>
-                {vitalCards.map((card, idx) => (
-                    <motion.div
-                        key={idx}
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.1 * idx, type: 'spring', stiffness: 100 }}
-                        whileHover={{ scale: 1.03, y: -5 }}
-                        className="glass vital-card-edge-glow hover-lift-glow"
-                        style={{
-                            padding: '24px',
-                            borderRadius: '20px',
-                            '--card-color': card.color,
-                            boxShadow: `0 8px 32px rgba(0,0,0,0.2)`,
-                            cursor: 'default'
-                        } as React.CSSProperties}
-                    >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
-                            <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', fontWeight: 500 }}>{card.label}</span>
-                            <card.icon color={card.color} size={20} />
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
-                            <span style={{ fontSize: '2.25rem', fontWeight: 700, color: 'var(--text-primary)' }}>{card.value}</span>
-                            <span style={{ fontSize: '1rem', color: 'var(--text-tertiary)' }}>{card.unit}</span>
-                        </div>
-                    </motion.div>
-                ))}
-            </div>
+      {/* WAVEFORM */}
+      <div style={{ marginBottom: 30 }}>
+        <VitalsScalePanel waveformSamples={waveformSamples} hrBpm={biomarkers?.hr} />
+      </div>
 
-            <motion.div
-                initial={{ opacity: 0, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.4, type: 'spring', stiffness: 80 }}
-                style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '24px', flex: 1 }}
+      {/* AI REPORT BUTTON */}
+      <button 
+        onClick={generateAIReport} 
+        disabled={isAnalyzing}
+        style={{ padding: "12px 20px", backgroundColor: "#10b981", color: "white", border: "none", borderRadius: 8, cursor: isAnalyzing ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 10, fontSize: "1rem", fontWeight: "bold" }}
+      >
+        {isAnalyzing ? <Loader2 className="animate-spin" size={20} /> : <FileText size={20} />}
+        {isAnalyzing ? "Analyzing Vitals..." : "Generate AI Report"}
+      </button>
+
+      {/* AI REPORT DISPLAY */}
+      {analysisResult && (
+        <div style={{ marginTop: 30, padding: 25, backgroundColor: "#f8fafc", borderRadius: 12, border: "1px solid #e2e8f0" }}>
+          <h2 style={{ marginTop: 0, display: "flex", alignItems: "center", gap: 10 }}>
+            <ActivityIcon color="#2563eb" /> AI Clinical Analysis
+          </h2>
+          
+          <div style={{ display: "flex", alignItems: "center", gap: 15, marginBottom: 20 }}>
+            <h1 style={{ margin: 0, color: analysisResult.healthScore >= 7.5 ? "#10b981" : "#f59e0b" }}>
+              Score: {analysisResult.healthScore}/10
+            </h1>
+            
+            {/* EMAIL PDF BUTTON */}
+            <button 
+              onClick={() => setIsModalOpen(true)}
+              style={{ padding: "8px 16px", backgroundColor: "#2563eb", color: "white", border: "none", borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}
             >
-                {/* Real-time Waveform Panel */}
-                <div className="glass" style={{ padding: '24px', borderRadius: '24px', display: 'flex', flexDirection: 'column' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                        <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem', color: 'var(--text-tertiary)' }}>
-                            <ActivityIcon size={18} color="var(--primary-color)" /> LIVE WAVEFORM STREAM
-                        </h4>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', fontFamily: 'Roboto Mono' }}>
-                            {status === BLEStatus.SCANNING_200HZ ? '200Hz' : isRecording ? '40Hz' : 'IDLE'}
-                        </div>
-                    </div>
-                    <div style={{ flex: 1, minHeight: '300px' }}>
-                        {/* waveformData passed to panel for visualization */}
-                        <VitalsScalePanel waveformSamples={waveformSamples} hrBpm={biomarkers?.hr} sqi={biomarkers?.sqi} />
-                    </div>
+              <Mail size={16} /> Email PDF Report
+            </button>
+          </div>
+
+          <div style={{ display: "grid", gap: 15 }}>
+            <div style={{ backgroundColor: "#fff", padding: 15, borderRadius: 8, border: "1px solid #e2e8f0" }}>
+              <strong>Summary:</strong> <p style={{ margin: "5px 0 0 0" }}>{analysisResult.general}</p>
+            </div>
+            <div style={{ backgroundColor: "#fff", padding: 15, borderRadius: 8, border: "1px solid #e2e8f0" }}>
+              <strong>Detailed Report:</strong> <p style={{ margin: "5px 0 0 0" }}>{analysisResult.report}</p>
+            </div>
+            <div style={{ backgroundColor: "#eff6ff", padding: 15, borderRadius: 8, border: "1px solid #bfdbfe" }}>
+              <strong style={{ color: "#1d4ed8" }}>Recommended Action:</strong> <p style={{ margin: "5px 0 0 0", color: "#1e3a8a" }}>{analysisResult.whatnow}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CHAT SECTION */}
+      <div style={{ marginTop: 40, padding: 25, backgroundColor: "#110920", borderRadius: 12, border: "1px solid #e2e8f0" }}>
+        <h3 style={{ marginTop: 0, display: "flex", alignItems: "center", gap: 10 }}>
+          <MessageSquare size={20} color="#8b5cf6" /> Ask the Medical AI
+        </h3>
+        <p style={{ color: "#666", fontSize: "0.9rem" }}>Generate an AI report first to chat about your results.</p>
+
+        <div style={{ maxHeight: 300, overflowY: "auto", padding: 10, display: "flex", flexDirection: "column", gap: 10, backgroundColor: "#f8fafc", borderRadius: 8, marginBottom: 15, minHeight: 100 }}>
+          {chatHistory.length === 0 && <p style={{ color: "#94a3b8", textAlign: "center", marginTop: 30 }}>No messages yet...</p>}
+          
+          {chatHistory.map((msg, i) => {
+            const isUser = msg.sender === "You";
+            return (
+              <div key={i} style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start" }}>
+                <div style={{ 
+                  maxWidth: "75%", 
+                  padding: "10px 15px", 
+                  borderRadius: 15, 
+                  backgroundColor: isUser ? "#3b82f6" : "#e2e8f0", 
+                  color: isUser ? "white" : "#1e293b",
+                  borderBottomRightRadius: isUser ? 0 : 15,
+                  borderBottomLeftRadius: isUser ? 15 : 0
+                }}>
+                  <b style={{ display: "block", fontSize: "0.8rem", opacity: 0.8, marginBottom: 4 }}>{msg.sender}</b>
+                  {msg.text}
                 </div>
+              </div>
+            );
+          })}
+          {isChatting && <div style={{ color: "#64748b", fontStyle: "italic", marginLeft: 10 }}>AI is typing...</div>}
+        </div>
 
-                {/* Secondary Metrics container */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                    <div className="glass" style={{ padding: '24px', borderRadius: '24px', background: 'linear-gradient(135deg, rgba(79, 70, 229, 0.1) 0%, rgba(0, 210, 255, 0.05) 100%)' }}>
-                        <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem', color: 'var(--text-tertiary)', marginBottom: '16px' }}>
-                            <Brain size={18} color="var(--primary-color)" />
-                            BIOMARKER STATUS
-                        </h4>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                <div style={{ color: isFinished ? 'var(--success-color)' : 'var(--primary-color)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    {isRecording ? <Loader2 size={18} className="animate-spin" /> : isFinished ? <ActivityIcon size={20} /> : <Square size={18} />}
-                                    {isRecording ? 'ANALYZING STREAM...' : isFinished ? 'SCAN SUCCESSFUL' : 'READY TO START'}
-                                </div>
-                            </div>
-                            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                {isRecording ? 'Detecting biomarkers from live telemetry. Please keep the patient still for optimal readings.' :
-                                    isFinished ? 'Biomarker analysis complete. Results synchronized to history.' :
-                                        'Waiting for device activation to begin biomarker extraction.'}
-                            </p>
-                        </div>
-                    </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <input
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+            placeholder="E.g. What does my SDNN score mean?"
+            style={{ flex: 1, padding: "12px 15px", borderRadius: 8, border: "1px solid #cbd5e1", outline: "none" }}
+            disabled={!reportId}
+          />
+          <button 
+            onClick={sendMessage} 
+            disabled={isChatting || !reportId}
+            style={{ padding: "0 20px", backgroundColor: reportId ? "#8b5cf6" : "#cbd5e1", color: "white", border: "none", borderRadius: 8, cursor: reportId ? "pointer" : "not-allowed", display: "flex", alignItems: "center", gap: 8 }}
+          >
+            <Send size={18} /> Send
+          </button>
+        </div>
+      </div>
 
-                    <div className="glass" style={{ padding: '24px', borderRadius: '24px', flex: 1 }}>
-                        <h4 style={{ fontSize: '0.9rem', color: 'var(--text-tertiary)', marginBottom: '20px' }}>CLINICAL INDICES</h4>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                            <div>
-                                <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '4px' }}>HRV Status (Stress)</div>
-                                <div style={{ fontSize: '1.5rem', fontWeight: 600 }}>{biomarkers?.stress || '--'}</div>
-                            </div>
-                            {biomarkers?.sdnn && (
-                                <div style={{ display: 'flex', gap: '20px' }}>
-                                    <div>
-                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '4px' }}>SDNN</div>
-                                        <div style={{ fontSize: '1.25rem', fontWeight: 600 }}>{biomarkers.sdnn} <span style={{ fontSize: '0.8rem' }}>ms</span></div>
-                                    </div>
-                                    <div>
-                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '4px' }}>RMSSD</div>
-                                        <div style={{ fontSize: '1.25rem', fontWeight: 600 }}>{biomarkers.rmssd} <span style={{ fontSize: '0.8rem' }}>ms</span></div>
-                                    </div>
-                                </div>
-                            )}
-                            <div>
-                                <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '4px' }}>Spo2 Level</div>
-                                <div style={{ fontSize: '1.25rem', fontWeight: 600, color: (biomarkers?.spo2 || 0) > 95 ? 'var(--success-color)' : 'var(--warning-color)' }}>
-                                    {biomarkers?.spo2 ? `${biomarkers.spo2.toFixed(1)}%` : '--'}
-                                </div>
-                            </div>
-                        </div>
+      {/* EMAIL POPUP MODAL */}
+      {isModalOpen && (
+        <div style={{
+          position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh",
+          backgroundColor: "rgba(0,0,0,0.6)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 50
+        }}>
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            style={{ backgroundColor: "white", padding: 30, borderRadius: 12, width: "350px", display: "flex", flexDirection: "column", gap: 15, boxShadow: "0 10px 25px rgba(0,0,0,0.2)" }}
+          >
+            <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: 10 }}>
+              <Mail size={20} color="#2563eb" /> Send Report
+            </h3>
+            
+            <div>
+              <label style={{ fontSize: "0.85rem", fontWeight: "bold", color: "#475569" }}>Patient Name</label>
+              <input 
+                placeholder="John Doe" 
+                value={emailForm.name}
+                onChange={(e) => setEmailForm({...emailForm, name: e.target.value})}
+                style={{ width: "93%", padding: 10, borderRadius: 6, border: "1px solid #cbd5e1", marginTop: 5 }}
+              />
+            </div>
+            
+            <div>
+              <label style={{ fontSize: "0.85rem", fontWeight: "bold", color: "#475569" }}>Patient Age</label>
+              <input 
+                placeholder="30" 
+                type="number"
+                value={emailForm.age}
+                onChange={(e) => setEmailForm({...emailForm, age: e.target.value})}
+                style={{ width: "93%", padding: 10, borderRadius: 6, border: "1px solid #cbd5e1", marginTop: 5 }}
+              />
+            </div>
+            
+            <div>
+              <label style={{ fontSize: "0.85rem", fontWeight: "bold", color: "#475569" }}>Recipient Email</label>
+              <input 
+                placeholder="doctor@clinic.com" 
+                type="email"
+                value={emailForm.email}
+                onChange={(e) => setEmailForm({...emailForm, email: e.target.value})}
+                style={{ width: "93%", padding: 10, borderRadius: 6, border: "1px solid #cbd5e1", marginTop: 5 }}
+              />
+            </div>
 
-                        <div style={{ marginTop: 'auto', padding: '16px', borderRadius: '12px', background: isRecording ? 'rgba(0, 210, 255, 0.05)' : 'rgba(239, 68, 68, 0.05)', border: `1px solid ${isRecording ? 'var(--border-color)' : 'rgba(239, 68, 68, 0.2)'}`, display: 'flex', gap: '12px' }}>
-                            {isRecording ? <ActivityIcon color="var(--primary-color)" size={20} /> : <AlertCircle color="#ef4444" size={20} />}
-                            <div style={{ fontSize: '0.8rem', color: isRecording ? 'var(--text-secondary)' : '#ef4444' }}>
-                                {isRecording ? 'Recording in progress...' : 'Monitoring inactive.'}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </motion.div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 15 }}>
+              <button 
+                onClick={() => setIsModalOpen(false)} 
+                style={{ padding: "10px 15px", backgroundColor: "#f1f5f9", color: "#475569", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: "bold" }}
+                disabled={isSendingEmail}
+              >
+                Cancel
+              </button>
+              
+              <button 
+                onClick={triggerPdfEmail} 
+                style={{ padding: "10px 15px", backgroundColor: "#2563eb", color: "white", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: "bold", display: "flex", alignItems: "center", gap: 8 }}
+                disabled={isSendingEmail}
+              >
+                {isSendingEmail ? <Loader2 className="animate-spin" size={16} /> : <Send size={16} />}
+                {isSendingEmail ? "Sending..." : "Send PDF"}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
 
-            <style>{`
-        @keyframes pulse {
-          0% { opacity: 1; transform: scale(1); }
-          50% { opacity: 0.5; transform: scale(1.1); }
-          100% { opacity: 1; transform: scale(1); }
-        }
-        .status-dot.active {
-            background: var(--success-color);
-            box-shadow: 0 0 10px var(--success-color);
-        }
-      `}</style>
-        </motion.div >
-    );
+    </motion.div>
+  );
 };
 
 export default LiveRecording;
