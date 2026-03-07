@@ -1,275 +1,358 @@
 /// <reference types="web-bluetooth" />
 import React, { createContext, useContext, useState, useRef, useCallback } from 'react';
 
-// BLE Constants from Firmware
-export const SERVICE_UUID = "0000fff0-0000-1000-8000-00805f9b34fb";
-export const CHAR_CMD_UUID = "0000fff1-0000-1000-8000-00805f9b34fb";
-export const CHAR_WAVE_UUID = "0000fff2-0000-1000-8000-00805f9b34fb";
-export const CHAR_BIO_UUID = "0000fff3-0000-1000-8000-00805f9b34fb";
-export const CHAR_STATUS_UUID = "0000fff4-0000-1000-8000-00805f9b34fb";
+// ========================================================================
+// BLE UUIDs — must match firmware BLEManager.h
+// ========================================================================
+export const SERVICE_UUID       = "0000fff0-0000-1000-8000-00805f9b34fb";
+export const STATUS_CHAR_UUID   = "0000fff1-0000-1000-8000-00805f9b34fb"; // Read+Indicate (1 byte)
+export const CONTROL_CHAR_UUID  = "0000fff2-0000-1000-8000-00805f9b34fb"; // Write         (1 byte)
+export const LIVEDATA_CHAR_UUID = "0000fff3-0000-1000-8000-00805f9b34fb"; // Notify        (32 bytes)
 
+// ========================================================================
+// Status enum — mirrors firmware DeviceState
+// ========================================================================
 export const BLEStatus = {
-    IDLE: 0,
-    SCANNING_40HZ: 1,
-    SCANNING_200HZ: 3,
-    FINISHED: 2,
     DISCONNECTED: -1,
-    CONNECTING: -2,
-    CONNECTED: -3
+    CONNECTING:   -2,
+    CONNECTED:    -3,
+    IDLE:          0,
+    SCANNING:      1,   // normal biomarker mode
+    SCANNING_BP:   2,   // BP mode (200 Hz)
 } as const;
 
-export type BLEStatusType = typeof BLEStatus[keyof typeof BLEStatus];
+export type BLEStatusType = (typeof BLEStatus)[keyof typeof BLEStatus];
 
+// ========================================================================
+// Data types
+// ========================================================================
 export interface Biomarkers {
-    mode?: 'normal' | 'fast';
-    spo2?: number;
-    hb?: number;
+    pi?:        number;
+    sqi?:       number;
+    spo2?:      number;
+    hr?:        number;
+    sdnn?:      number;
+    rmssd?:     number;
+    hb?:        number;
     bilirubin?: number;
-    hr?: number;
-    rmssd?: number;
-    sdnn?: number;
-    stress?: string;
-    pi?: number;
-    sqi?: number;
-    bpSys?: number;
-    bpDia?: number;
-    respRate?: number;
+    bpSys?:     number;
+    bpDia?:     number;
+    pulseRate?: number;
+    respRate?:  number;
 }
 
-export interface WaveformSample {
-    t: number;   // device timestamp_ms
-    nir: number; // raw NIR ADC value
-}
+export type ScanPhase = 'idle' | 'normal' | 'bp' | 'done';
 
 interface BLEContextType {
-    status: BLEStatusType;
-    device: BluetoothDevice | null;
-    waveform: number[];
-    waveformSamples: WaveformSample[];
-    biomarkers: Biomarkers | null;
-    logs: string[];
-    connect: () => Promise<void>;
-    disconnect: () => void;
-    sendCommand: (cmd: number) => Promise<void>;
-    clearLogs: () => void;
+    status:        BLEStatusType;
+    device:        BluetoothDevice | null;
+    biomarkers:    Biomarkers;
+    bestNormal:    Biomarkers;
+    bestBP:        Biomarkers;
+    scanPhase:     ScanPhase;
+    scanSeconds:   number;
+    logs:          string[];
+    connect:       () => Promise<void>;
+    disconnect:    () => void;
+    sendCommand:   (cmd: number) => Promise<void>;
+    startFullScan: () => void;
+    clearLogs:     () => void;
 }
 
 const BLEContext = createContext<BLEContextType | null>(null);
 
 export const useBLE = () => {
-    const context = useContext(BLEContext);
-    if (!context) throw new Error("useBLE must be used within a BLEProvider");
-    return context;
+    const ctx = useContext(BLEContext);
+    if (!ctx) throw new Error("useBLE must be used within a BLEProvider");
+    return ctx;
 };
 
+// ========================================================================
+// Provider
+// ========================================================================
 export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [device, setDevice] = useState<BluetoothDevice | null>(null);
-    const [status, setStatus] = useState<BLEStatusType>(BLEStatus.DISCONNECTED);
-    const [waveform, setWaveform] = useState<number[]>([]);
-    const [waveformSamples, setWaveformSamples] = useState<WaveformSample[]>([]);
-    const [biomarkers, setBiomarkers] = useState<Biomarkers | null>(null);
-    const [logs, setLogs] = useState<string[]>(["[SYSTEM] BLE INITIALIZED"]);
+    const [device, setDevice]           = useState<BluetoothDevice | null>(null);
+    const [status, setStatus]           = useState<BLEStatusType>(BLEStatus.DISCONNECTED);
+    const [biomarkers, setBiomarkers]   = useState<Biomarkers>({});
+    const [bestNormal, setBestNormal]   = useState<Biomarkers>({});
+    const [bestBP, setBestBP]           = useState<Biomarkers>({});
+    const [scanPhase, setScanPhase]     = useState<ScanPhase>('idle');
+    const [scanSeconds, setScanSeconds] = useState(0);
+    const [logs, setLogs]               = useState<string[]>(["[SYSTEM] BLE initialized"]);
 
-    const cmdCharRef = useRef<BluetoothRemoteGATTCharacteristic | null>(null);
-    const serverRef = useRef<BluetoothRemoteGATTServer | null>(null);
+    const controlCharRef = useRef<BluetoothRemoteGATTCharacteristic | null>(null);
+    const serverRef      = useRef<BluetoothRemoteGATTServer | null>(null);
+    const phaseRef       = useRef<ScanPhase>('idle');
+    const bestNormalRef  = useRef<Biomarkers>({});
+    const bestBPRef      = useRef<Biomarkers>({});
+    const scanTimerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    // Accumulate all valid readings for weighted averaging
+    const normalSamplesRef = useRef<Biomarkers[]>([]);
+    const bpSamplesRef     = useRef<Biomarkers[]>([]);
+
+    /** Compute SQI-weighted average of accumulated normal samples */
+    const computeWeightedNormal = (): Biomarkers => {
+        const samples = normalSamplesRef.current;
+        if (samples.length === 0) return {};
+        const keys: (keyof Biomarkers)[] = ['pi', 'sqi', 'spo2', 'hr', 'sdnn', 'rmssd', 'hb', 'bilirubin'];
+        let totalWeight = 0;
+        const sums: Record<string, number> = {};
+        for (const s of samples) {
+            const w = Math.max(s.sqi ?? 1, 1); // SQI as weight, min 1
+            totalWeight += w;
+            for (const k of keys) {
+                if (s[k] !== undefined && !isNaN(s[k]!)) {
+                    sums[k] = (sums[k] ?? 0) + s[k]! * w;
+                }
+            }
+        }
+        const result: Biomarkers = {};
+        for (const k of keys) {
+            if (sums[k] !== undefined) (result as any)[k] = sums[k] / totalWeight;
+        }
+        return result;
+    };
+
+    /** Compute simple average of accumulated BP samples */
+    const computeAverageBP = (): Biomarkers => {
+        const samples = bpSamplesRef.current;
+        if (samples.length === 0) return {};
+        const keys: (keyof Biomarkers)[] = ['bpSys', 'bpDia', 'pulseRate', 'respRate'];
+        const sums: Record<string, { total: number; count: number }> = {};
+        for (const s of samples) {
+            for (const k of keys) {
+                if (s[k] !== undefined && !isNaN(s[k]!)) {
+                    if (!sums[k]) sums[k] = { total: 0, count: 0 };
+                    sums[k].total += s[k]!;
+                    sums[k].count++;
+                }
+            }
+        }
+        const result: Biomarkers = {};
+        for (const k of keys) {
+            if (sums[k]) (result as any)[k] = sums[k].total / sums[k].count;
+        }
+        return result;
+    };
 
     const addLog = useCallback((msg: string) => {
-        setLogs(prev => [...prev.slice(-99), `[${new Date().toLocaleTimeString()}] ${msg}`]);
+        setLogs(prev => [...prev.slice(-199), `[${new Date().toLocaleTimeString()}] ${msg}`]);
     }, []);
 
-    // ========================================================
-    // FFF2 — WAVEFORM (13-byte packed struct from firmware)
-    // Struct: [Uint32 timestamp_ms | Uint16 raw_nir | Uint16 raw_f8 | Uint16 raw_fz | Uint16 hr | Uint8 sqi]
-    // We extract raw_nir at offset 4 as the primary PPG signal for charting.
-    // ========================================================
-    const handleWaveform = useCallback((event: any) => {
-        const dv: DataView = event.target.value;
-
-        if (dv.byteLength === 13) {
-            const tMs = dv.getUint32(0, true);
-            const nirSignal = dv.getUint16(4, true);
-            setWaveform(prev => [...prev, nirSignal].slice(-300));
-            setWaveformSamples(prev => [...prev, { t: tMs, nir: nirSignal }].slice(-600));
-        } else {
-            addLog(`[WAVE] WARN: Invalid Waveform packet length (${dv.byteLength}b)`);
-        }
-    }, [addLog]);
-
-    // ========================================================
-    // FFF3 — BIOMARKER RESULTS
-    //
-    // Current firmware (23 bytes, no header):
-    //   [mode(1)|hb(2)|spo2(2)|bili(2)|pi(2)|sqi(1)|sdnn(2)|rmssd(2)|bp_sys(2)|bp_dia(2)|resp(2)|hr(2)|eof(1)]
-    //
-    // Legacy firmware (14 bytes, 0xB0 header prepended):
-    //   [0xB0(1)|mode(1)|hb(2)|spo2(2)|bili(2)|pi(2)|sqi(1)|hr_bpm_x10(2)|eof(1)]
-    //
-    // EOF = 0xFE. Mode: 0x01=Normal, 0x03=Fast.
-    // ========================================================
-    const handleBiomarkers = useCallback((event: any) => {
-        const dv: DataView = event.target.value;
-        const len = dv.byteLength;
-
-        // Detect legacy 14-byte format by checking for the 0xB0 magic header byte.
-        const isLegacy = len === 14 && dv.getUint8(0) === 0xB0;
-
-        if (len !== 23 && !isLegacy) {
-            addLog(`[BIO] WARN: Invalid Biomarker packet length (${len}b)`);
+    // ----------------------------------------------------------------
+    // FFF3 — Live Data (32 bytes = 8 × float32 LE)
+    // Normal: [pi, sqi, spo2, hr, sdnn, rmssd, hb, bili]
+    // BP:     [sbp, dbp, pulse_rate, resp_rate, 0, 0, 0, 0]
+    // ----------------------------------------------------------------
+    const handleLiveData = useCallback((event: Event) => {
+        const target = event.target as BluetoothRemoteGATTCharacteristic;
+        const dv: DataView = target.value!;
+        if (dv.byteLength !== 32) {
+            addLog(`[DATA] Invalid packet (${dv.byteLength}b, expected 32)`);
             return;
         }
 
-        // For legacy packets the struct starts 1 byte in (after the 0xB0 header).
-        const offset = isLegacy ? 1 : 0;
-        const modeByte = dv.getUint8(offset);
+        const phase = phaseRef.current;
 
-        // EOF marker check (byte 22 for current, byte 13 for legacy).
-        const eofByte = isLegacy ? dv.getUint8(13) : dv.getUint8(22);
-        if (eofByte !== 0xFE) {
-            addLog(`[BIO] WARN: Invalid EOF marker (0x${eofByte.toString(16)})`);
-            return;
-        }
+        if (phase === 'normal') {
+            const pi    = dv.getFloat32(0,  true);
+            const sqi   = dv.getFloat32(4,  true);
+            const spo2  = dv.getFloat32(8,  true);
+            const hr    = dv.getFloat32(12, true);
+            const sdnn  = dv.getFloat32(16, true);
+            const rmssd = dv.getFloat32(20, true);
+            const hb    = dv.getFloat32(24, true);
+            const bili  = dv.getFloat32(28, true);
 
-        let results: Biomarkers = {};
+            const pkt: Biomarkers = { pi, sqi, spo2, hr, sdnn, rmssd, hb, bilirubin: bili };
+            setBiomarkers(pkt);
 
-        if (modeByte === 0x01) {
-            // ---- NORMAL MODE (40Hz) ----
-            // Layout from offset: hb(+1), spo2(+3), bili(+5), pi(+7), sqi(+9), hr(+20)
-            // Legacy has hr_bpm_x10 at (+10); current has integer BPM at (+20).
-            const hrBpm = isLegacy
-                ? dv.getUint16(offset + 10, true) / 10.0
-                : dv.getUint16(offset + 20, true);
-            results = {
-                mode: 'normal',
-                hb:        dv.getUint16(offset + 1, true) / 100.0,
-                spo2:      dv.getUint16(offset + 3, true) / 100.0,
-                bilirubin: dv.getUint16(offset + 5, true) / 100.0,
-                pi:        dv.getUint16(offset + 7, true) / 1000.0,
-                sqi:       dv.getUint8(offset + 9),
-                ...(hrBpm > 0 && { hr: hrBpm }),
-                stress: "LOW"
-            };
-            addLog(`[BIO] NORMAL: Hb=${results.hb} | SpO2=${results.spo2}% | Bili=${results.bilirubin} | PI=${results.pi}% | SQI=${results.sqi} | HR=${hrBpm}`);
-        } else if (modeByte === 0x03) {
-            // ---- FAST MODE (200Hz) — only in 21-byte current format ----
-            if (isLegacy) {
-                addLog(`[BIO] WARN: Fast mode packet not supported in legacy format`);
-                return;
+            // Accumulate valid readings and update weighted average
+            if (hr > 30 && hr < 250) {
+                normalSamplesRef.current.push(pkt);
+                const avg = computeWeightedNormal();
+                bestNormalRef.current = avg;
+                setBestNormal(avg);
             }
-            const rmssdVal = dv.getUint16(offset + 12, true);
-            const hrFast   = dv.getUint16(offset + 20, true);
-            results = {
-                mode: 'fast',
-                sdnn:     dv.getUint16(offset + 10, true),
-                rmssd:    rmssdVal,
-                bpSys:    dv.getUint16(offset + 14, true),
-                bpDia:    dv.getUint16(offset + 16, true),
-                respRate: dv.getUint16(offset + 18, true),
-                ...(hrFast > 0 && { hr: hrFast }),
-                stress:   rmssdVal > 50 ? "HIGH" : "NORMAL"
+
+            addLog(`[NORMAL] PI=${pi.toFixed(2)} SQI=${sqi.toFixed(2)} SpO2=${spo2.toFixed(1)} HR=${hr.toFixed(0)}`);
+
+        } else if (phase === 'bp') {
+            const sbp = dv.getFloat32(0,  true);
+            const dbp = dv.getFloat32(4,  true);
+            const pr  = dv.getFloat32(8,  true);
+            const rr  = dv.getFloat32(12, true);
+
+            // NaN means device has no calibration yet — omit those fields
+            const pkt: Biomarkers = {
+                bpSys:     isNaN(sbp) ? undefined : sbp,
+                bpDia:     isNaN(dbp) ? undefined : dbp,
+                pulseRate: pr,
+                respRate:  (rr > 0 && rr <= 35) ? rr : undefined,
             };
-            addLog(`[BIO] FAST: HR=${hrFast} | SDNN=${results.sdnn}ms | RMSSD=${results.rmssd}ms | BP=${results.bpSys}/${results.bpDia} | RR=${results.respRate}`);
-        } else {
-            addLog(`[BIO] WARN: Unknown Mode byte (0x${modeByte.toString(16)}) — possible header misparse`);
-        }
+            // Merge into existing biomarkers so normal readings (HR, SpO2, SDNN…) stay visible
+            setBiomarkers(prev => ({ ...prev, ...Object.fromEntries(Object.entries(pkt).filter(([, v]) => v !== undefined)) }));
 
-        if (Object.keys(results).length > 0) {
-            setBiomarkers(prev => ({ ...prev, ...results }));
+            // Accumulate valid BP readings and update running average
+            if (pr > 30 && pr < 250) {
+                bpSamplesRef.current.push(pkt);
+                const avg = computeAverageBP();
+                bestBPRef.current = avg;
+                setBestBP(avg);
+            }
+
+            const sbpStr = isNaN(sbp) ? 'uncal' : sbp.toFixed(1);
+            const dbpStr = isNaN(dbp) ? 'uncal' : dbp.toFixed(1);
+            const rrStr  = (rr > 0 && rr <= 35) ? rr.toFixed(1) : 'wait';
+            addLog(`[BP] SBP=${sbpStr} DBP=${dbpStr} PR=${pr.toFixed(0)} RR=${rrStr}`);
         }
     }, [addLog]);
 
-    // ========================================================
-    // FFF4 — STATUS (1 byte: 0x00=Idle, 0x01=Running40, 0x03=Running200, 0x02=Finished)
-    // ========================================================
-    const handleStatus = useCallback((event: any) => {
-        const s = event.target.value.getUint8(0);
-        setStatus(s as BLEStatusType);
-        addLog(`[ST] DEVICE STATUS: ${s}`);
+    // ----------------------------------------------------------------
+    // FFF1 — Status Indicate (1 byte)
+    // ----------------------------------------------------------------
+    const handleStatus = useCallback((event: Event) => {
+        const target = event.target as BluetoothRemoteGATTCharacteristic;
+        const s = target.value!.getUint8(0);
+        if (s === 0x00) setStatus(BLEStatus.IDLE);
+        else if (s === 0x01) setStatus(BLEStatus.SCANNING);
+        else if (s === 0x02) setStatus(BLEStatus.SCANNING_BP);
+        addLog(`[STATUS] Device → 0x${s.toString(16).padStart(2, '0')}`);
     }, [addLog]);
 
+    // ----------------------------------------------------------------
+    // Connect
+    // ----------------------------------------------------------------
     const connect = async () => {
         try {
-            addLog("[BLE] REQUESTING DEVICE...");
+            addLog("[BLE] Requesting device...");
             setStatus(BLEStatus.CONNECTING);
 
             const dev = await navigator.bluetooth.requestDevice({
-                filters: [{ name: "AS7343-BIO" }],
+                filters: [{ name: "Spectru" }],
                 optionalServices: [SERVICE_UUID]
             });
 
-            addLog(`[BLE] CONNECTING TO ${dev.name}...`);
+            addLog(`[BLE] Connecting to ${dev.name}...`);
             const server = await dev.gatt!.connect();
             serverRef.current = server;
 
-            addLog("[BLE] DISCOVERING SERVICES...");
             const service = await server.getPrimaryService(SERVICE_UUID);
 
-            addLog("[BLE] CONFIGURING CHARACTERISTICS...");
-            cmdCharRef.current = await service.getCharacteristic(CHAR_CMD_UUID);
+            controlCharRef.current = await service.getCharacteristic(CONTROL_CHAR_UUID);
 
-            const waveChar = await service.getCharacteristic(CHAR_WAVE_UUID);
-            const bioChar = await service.getCharacteristic(CHAR_BIO_UUID);
-            const statusChar = await service.getCharacteristic(CHAR_STATUS_UUID);
+            const liveChar = await service.getCharacteristic(LIVEDATA_CHAR_UUID);
+            await liveChar.startNotifications();
+            liveChar.addEventListener('characteristicvaluechanged', handleLiveData);
 
-            await waveChar.startNotifications();
-            waveChar.addEventListener('characteristicvaluechanged', handleWaveform);
-
-            await bioChar.startNotifications();
-            bioChar.addEventListener('characteristicvaluechanged', handleBiomarkers);
-
+            const statusChar = await service.getCharacteristic(STATUS_CHAR_UUID);
             await statusChar.startNotifications();
             statusChar.addEventListener('characteristicvaluechanged', handleStatus);
 
             dev.addEventListener('gattserverdisconnected', () => {
-                addLog("[BLE] DEVICE DISCONNECTED");
+                addLog("[BLE] Device disconnected");
                 setStatus(BLEStatus.DISCONNECTED);
                 setDevice(null);
+                cleanupScan();
             });
 
             setDevice(dev);
             setStatus(BLEStatus.CONNECTED);
-            addLog("[BLE] SYSTEM ONLINE AND READY");
-
+            addLog("[BLE] Ready");
         } catch (error: any) {
-            addLog(`[BLE] ERROR: ${error.message}`);
+            addLog(`[BLE] Error: ${error.message}`);
             setStatus(BLEStatus.DISCONNECTED);
-            throw error;
         }
     };
 
     const disconnect = () => {
-        if (serverRef.current?.connected) {
-            serverRef.current.disconnect();
+        cleanupScan();
+        serverRef.current?.connected && serverRef.current.disconnect();
+    };
+
+    // ----------------------------------------------------------------
+    // Send raw command to FFF2
+    // ----------------------------------------------------------------
+    const sendCommand = async (cmd: number) => {
+        if (!controlCharRef.current) { addLog("[CMD] Not connected"); return; }
+        try {
+            await controlCharRef.current.writeValue(new Uint8Array([cmd]));
+            addLog(`[CMD] Sent 0x${cmd.toString(16).padStart(2, '0')}`);
+        } catch (error: any) {
+            addLog(`[CMD] Error: ${error.message}`);
         }
     };
 
-    const sendCommand = async (cmd: number) => {
-        if (!cmdCharRef.current) {
-            addLog("[BLE] ERROR: NOT CONNECTED");
-            return;
-        }
-        try {
-            const buffer = new Uint8Array([cmd]);
-            await cmdCharRef.current.writeValue(buffer);
-            addLog(`[CMD] SENT: 0x${cmd.toString(16).padStart(2, '0')}`);
-        } catch (error: any) {
-            addLog(`[CMD] ERROR: ${error.message}`);
-        }
+    // ----------------------------------------------------------------
+    // Cleanup
+    // ----------------------------------------------------------------
+    const cleanupScan = () => {
+        if (scanTimerRef.current) { clearInterval(scanTimerRef.current); scanTimerRef.current = null; }
+        phaseRef.current = 'idle';
+        setScanPhase('idle');
+        setScanSeconds(0);
+    };
+
+    // ----------------------------------------------------------------
+    // Full Scan: 20 s normal → stop → 20 s BP → stop → done
+    // ----------------------------------------------------------------
+    const startFullScan = () => {
+        if (!controlCharRef.current) { addLog("[SCAN] Not connected"); return; }
+
+        bestNormalRef.current = {};
+        bestBPRef.current = {};
+        normalSamplesRef.current = [];
+        bpSamplesRef.current = [];
+        setBestNormal({});
+        setBestBP({});
+        setBiomarkers({});
+
+        let elapsed = 0;
+        const NORMAL_DUR = 30;
+        const BP_DUR = 30;
+
+        phaseRef.current = 'normal';
+        setScanPhase('normal');
+        setScanSeconds(NORMAL_DUR);
+        sendCommand(0x01);
+        addLog("[SCAN] Phase 1/2: Normal mode (30 s)");
+
+        scanTimerRef.current = setInterval(async () => {
+            elapsed++;
+
+            if (elapsed <= NORMAL_DUR) {
+                setScanSeconds(NORMAL_DUR - elapsed);
+            } else if (elapsed === NORMAL_DUR + 1) {
+                await sendCommand(0x00);
+                addLog("[SCAN] Normal complete. Starting BP...");
+                setTimeout(async () => {
+                    phaseRef.current = 'bp';
+                    setScanPhase('bp');
+                    setScanSeconds(BP_DUR);
+                    await sendCommand(0x02);
+                    addLog("[SCAN] Phase 2/2: BP mode (30 s)");
+                }, 500);
+            } else if (elapsed <= NORMAL_DUR + 1 + BP_DUR) {
+                setScanSeconds(NORMAL_DUR + 1 + BP_DUR - elapsed);
+            } else {
+                await sendCommand(0x00);
+                addLog("[SCAN] Complete!");
+                phaseRef.current = 'idle';
+                setScanPhase('done');
+                setScanSeconds(0);
+                if (scanTimerRef.current) { clearInterval(scanTimerRef.current); scanTimerRef.current = null; }
+            }
+        }, 1000);
     };
 
     const clearLogs = () => setLogs([]);
 
     return (
         <BLEContext.Provider value={{
-            status,
-            device,
-            waveform,
-            waveformSamples,
-            biomarkers,
-            logs,
-            connect,
-            disconnect,
-            sendCommand,
-            clearLogs
+            status, device, biomarkers, bestNormal, bestBP,
+            scanPhase, scanSeconds, logs,
+            connect, disconnect, sendCommand, startFullScan, clearLogs
         }}>
             {children}
         </BLEContext.Provider>

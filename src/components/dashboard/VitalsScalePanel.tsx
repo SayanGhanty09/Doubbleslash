@@ -8,7 +8,7 @@ import {
     XAxis,
     ReferenceLine,
 } from 'recharts';
-import type { WaveformSample } from '../../contexts/BLEContext';
+interface WaveformSample { t: number; nir: number; }
 
 interface VitalsScalePanelProps {
     waveformSamples?: WaveformSample[];

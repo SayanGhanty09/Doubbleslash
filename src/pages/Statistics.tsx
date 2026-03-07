@@ -1,5 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useBLE } from '../contexts/BLEContext';
+import { usePatientStore } from '../contexts/PatientStore';
+import type { RecordingEntry, Patient } from '../contexts/PatientStore';
 import { motion } from 'framer-motion';
 import {
     FileDown,
@@ -7,7 +9,11 @@ import {
     Activity,
     Info,
     ChevronDown,
-    Download
+    Download,
+    User,
+    Trash2,
+    Heart,
+    Wind
 } from 'lucide-react';
 import {
     ResponsiveContainer,
@@ -20,212 +26,289 @@ import {
 } from 'recharts';
 
 const Statistics: React.FC = () => {
-    const [selectedSession] = useState("Session #1024 - 2024-05-20");
-    const { biomarkers, waveformSamples } = useBLE();
+    const { biomarkers } = useBLE();
+    const { patients, recordings, deleteRecording } = usePatientStore();
 
-    // PPG signal trend derived from real scan waveform data
-    const trendData = useMemo(() => {
-        if (!waveformSamples || waveformSamples.length < 20) {
-            return Array.from({ length: 80 }, (_, i) => ({ time: i, ppg: 0 }));
+    const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
+    const [selectedRecordingId, setSelectedRecordingId] = useState<string | null>(null);
+
+    // Group recordings by patient
+    const patientMap = useMemo(() => {
+        const m = new Map<string, { patient: Patient; records: RecordingEntry[] }>();
+        for (const p of patients) {
+            m.set(p.id, { patient: p, records: [] });
         }
-        const recent = waveformSamples.slice(-480);
-        const mean = recent.reduce((a, b) => a + b.nir, 0) / recent.length;
-        const step = Math.max(1, Math.floor(recent.length / 80));
-        return recent
-            .filter((_, i) => i % step === 0)
-            .map((s, i) => ({ time: i, ppg: s.nir - mean }));
-    }, [waveformSamples]);
+        for (const r of recordings) {
+            const entry = m.get(r.patientId);
+            if (entry) entry.records.push(r);
+            else m.set(r.patientId, { patient: { id: r.patientId, name: r.patientName, age: 0, sex: 'Other', createdAt: '' }, records: [r] });
+        }
+        return m;
+    }, [patients, recordings]);
+
+    const selectedData = useMemo(() => {
+        if (selectedRecordingId) {
+            const rec = recordings.find(r => r.id === selectedRecordingId);
+            return rec?.biomarkers ?? null;
+        }
+        return null;
+    }, [selectedRecordingId, recordings]);
+
+    // Use selected recording data for display, fallback to live biomarkers
+    const displayBio = selectedData ?? biomarkers;
+
+    // Synthetic waveform based on HR and RR
+    const waveformData = useMemo(() => {
+        const hr = displayBio?.hr ?? 72;
+        const rr = displayBio?.respRate ?? 16;
+        const points = 200;
+        const duration = 4; // seconds
+        const data = [];
+        for (let i = 0; i < points; i++) {
+            const t = (i / points) * duration;
+            // Cardiac component — sharp systolic peak + dicrotic notch
+            const cardiacPhase = (t * hr / 60) % 1;
+            let cardiac = 0;
+            if (cardiacPhase < 0.1) cardiac = Math.sin(cardiacPhase / 0.1 * Math.PI) * 80;
+            else if (cardiacPhase < 0.15) cardiac = Math.sin((cardiacPhase - 0.1) / 0.05 * Math.PI) * -15;
+            else if (cardiacPhase < 0.25) cardiac = Math.sin((cardiacPhase - 0.15) / 0.1 * Math.PI) * 30;
+            else cardiac = -5 * Math.exp(-8 * (cardiacPhase - 0.25));
+            // Respiratory modulation
+            const respMod = 1 + 0.12 * Math.sin(2 * Math.PI * rr / 60 * t);
+            data.push({ time: t.toFixed(2), ppg: parseFloat((cardiac * respMod).toFixed(2)) });
+        }
+        return data;
+    }, [displayBio?.hr, displayBio?.respRate]);
+
+    const metrics = [
+        { label: 'Heart Rate', value: displayBio?.hr ? displayBio.hr.toFixed(2) : '--', sub: 'bpm' },
+        { label: 'SpO2', value: displayBio?.spo2 ? displayBio.spo2.toFixed(2) : '--', sub: '%' },
+        { label: 'Hemoglobin (Hb)', value: displayBio?.hb ? displayBio.hb.toFixed(2) : '--', sub: 'g/dL' },
+        { label: 'Bilirubin', value: displayBio?.bilirubin ? displayBio.bilirubin.toFixed(2) : '--', sub: 'mg/dL' },
+        { label: 'Blood Pressure', value: displayBio?.bpSys ? `${displayBio.bpSys.toFixed(2)}/${displayBio.bpDia?.toFixed(2)}` : '--', sub: 'mmHg' },
+        { label: 'Resp. Rate', value: displayBio?.respRate ? displayBio.respRate.toFixed(2) : '--', sub: 'br/min' },
+    ];
+
+    const hrvMetrics = [
+        { label: 'SDNN', value: displayBio?.sdnn ? displayBio.sdnn.toFixed(2) : '--', unit: 'ms', pct: Math.min(100, ((displayBio?.sdnn ?? 0) / 100) * 100) },
+        { label: 'RMSSD', value: displayBio?.rmssd ? displayBio.rmssd.toFixed(2) : '--', unit: 'ms', pct: Math.min(100, ((displayBio?.rmssd ?? 0) / 80) * 100) },
+        { label: 'PI (Perfusion Index)', value: displayBio?.pi ? displayBio.pi.toFixed(2) : '--', unit: '%', pct: Math.min(100, ((displayBio?.pi ?? 0) / 5) * 100) },
+        { label: 'SQI (Signal Quality)', value: displayBio?.sqi !== undefined ? displayBio.sqi.toFixed(2) : '--', unit: '/100', pct: displayBio?.sqi ?? 0 },
+        { label: 'Hemoglobin (Hb)', value: displayBio?.hb ? displayBio.hb.toFixed(2) : '--', unit: 'g/dL', pct: Math.min(100, Math.max(0, ((displayBio?.hb ?? 0) - 8) / 10 * 100)) },
+    ];
+
+    const clinicalSummary = useMemo(() => {
+        if (!displayBio) return 'No scan data available. Connect your device and run a scan to populate this section.';
+        const flags: string[] = [];
+        if (displayBio.spo2 && displayBio.spo2 < 95) flags.push(`Low SpO₂ (${displayBio.spo2.toFixed(2)}%)`);
+        if (displayBio.hb && displayBio.hb < 12) flags.push(`Low Hb (${displayBio.hb.toFixed(2)} g/dL)`);
+        if (displayBio.bilirubin && displayBio.bilirubin > 2.0) flags.push(`Elevated Bilirubin (${displayBio.bilirubin.toFixed(2)} mg/dL)`);
+        if (displayBio.hr && (displayBio.hr > 100 || displayBio.hr < 50)) flags.push(`Abnormal HR (${displayBio.hr.toFixed(2)} bpm)`);
+        if (flags.length > 0) return `Attention — ${flags.join('; ')}. Clinical review recommended.`;
+        return 'All indices remain within normal ranges. No significant autonomic dysfunction or haematological abnormalities detected.';
+    }, [displayBio]);
 
     const exportToCSV = () => {
         const headers = ["Parameter", "Value", "Unit"];
         const rows = [
-            ["Heart Rate", biomarkers?.hr ? Math.round(biomarkers.hr).toString() : "--", "bpm"],
-            ["SpO2", biomarkers?.spo2 ? biomarkers.spo2.toFixed(1) : "--", "%"],
-            ["Hemoglobin (Hb)", biomarkers?.hb ? biomarkers.hb.toFixed(1) : "--", "g/dL"],
-            ["Bilirubin", biomarkers?.bilirubin ? biomarkers.bilirubin.toFixed(2) : "--", "mg/dL"],
-            ["Blood Pressure", biomarkers?.bpSys ? `${biomarkers.bpSys}/${biomarkers.bpDia}` : "--", "mmHg"],
-            ["PI", biomarkers?.pi ? biomarkers.pi.toFixed(3) : "--", "%"],
-            ["SQI", biomarkers?.sqi !== undefined ? biomarkers.sqi.toString() : "--", "/100"],
-            ["SDNN", biomarkers?.sdnn ? biomarkers.sdnn.toString() : "--", "ms"],
-            ["RMSSD", biomarkers?.rmssd ? biomarkers.rmssd.toString() : "--", "ms"],
+            ["Heart Rate", displayBio?.hr ? displayBio.hr.toFixed(2) : "--", "bpm"],
+            ["SpO2", displayBio?.spo2 ? displayBio.spo2.toFixed(2) : "--", "%"],
+            ["Hemoglobin (Hb)", displayBio?.hb ? displayBio.hb.toFixed(2) : "--", "g/dL"],
+            ["Bilirubin", displayBio?.bilirubin ? displayBio.bilirubin.toFixed(2) : "--", "mg/dL"],
+            ["Blood Pressure", displayBio?.bpSys ? `${displayBio.bpSys.toFixed(2)}/${displayBio.bpDia?.toFixed(2)}` : "--", "mmHg"],
+            ["PI", displayBio?.pi ? displayBio.pi.toFixed(2) : "--", "%"],
+            ["SQI", displayBio?.sqi !== undefined ? displayBio.sqi.toFixed(2) : "--", "/100"],
+            ["SDNN", displayBio?.sdnn ? displayBio.sdnn.toFixed(2) : "--", "ms"],
+            ["RMSSD", displayBio?.rmssd ? displayBio.rmssd.toFixed(2) : "--", "ms"],
         ];
-
-        const csvContent = "data:text/csv;charset=utf-8,"
-            + headers.join(",") + "\n"
-            + rows.map(e => e.join(",")).join("\n");
-
-        const encodedUri = encodeURI(csvContent);
+        const csvContent = "data:text/csv;charset=utf-8," + headers.join(",") + "\n" + rows.map(e => e.join(",")).join("\n");
         const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
+        link.setAttribute("href", encodeURI(csvContent));
         link.setAttribute("download", `statistics_${new Date().toISOString().split('T')[0]}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
     };
 
-    const handlePrint = () => {
-        window.print();
-    };
-
-
-    const metrics = [
-        { label: 'Heart Rate', value: biomarkers?.hr ? `${Math.round(biomarkers.hr)}` : '--', sub: 'bpm' },
-        { label: 'SpO2', value: biomarkers?.spo2 ? biomarkers.spo2.toFixed(1) : '--', sub: '%' },
-        { label: 'Hemoglobin (Hb)', value: biomarkers?.hb ? biomarkers.hb.toFixed(1) : '--', sub: 'g/dL' },
-        { label: 'Bilirubin', value: biomarkers?.bilirubin ? biomarkers.bilirubin.toFixed(2) : '--', sub: 'mg/dL' },
-        { label: 'Blood Pressure', value: biomarkers?.bpSys ? `${biomarkers.bpSys}/${biomarkers.bpDia}` : '--', sub: 'mmHg' },
-        { label: 'Resp. Rate', value: biomarkers?.respRate ? `${biomarkers.respRate}` : '--', sub: 'br/min' },
-    ];
-
-    const hrvMetrics = [
-        { label: 'SDNN', value: biomarkers?.sdnn ? `${biomarkers.sdnn}` : '--', unit: 'ms', pct: Math.min(100, ((biomarkers?.sdnn ?? 0) / 100) * 100) },
-        { label: 'RMSSD', value: biomarkers?.rmssd ? `${biomarkers.rmssd}` : '--', unit: 'ms', pct: Math.min(100, ((biomarkers?.rmssd ?? 0) / 80) * 100) },
-        { label: 'Stress Level', value: biomarkers?.stress || '--', unit: '', pct: biomarkers?.stress === 'HIGH' ? 85 : biomarkers?.stress === 'NORMAL' ? 50 : biomarkers?.stress === 'LOW' ? 15 : 0 },
-        { label: 'PI (Perfusion Index)', value: biomarkers?.pi ? biomarkers.pi.toFixed(3) : '--', unit: '%', pct: Math.min(100, ((biomarkers?.pi ?? 0) / 5) * 100) },
-        { label: 'SQI (Signal Quality)', value: biomarkers?.sqi !== undefined ? `${biomarkers.sqi}` : '--', unit: '/100', pct: biomarkers?.sqi ?? 0 },
-        { label: 'Hemoglobin (Hb)', value: biomarkers?.hb ? biomarkers.hb.toFixed(1) : '--', unit: 'g/dL', pct: Math.min(100, Math.max(0, ((biomarkers?.hb ?? 0) - 8) / 10 * 100)) },
-    ];
-
-    const clinicalSummary = useMemo(() => {
-        if (!biomarkers) return 'No scan data available. Connect your device and run a scan to populate this section.';
-        const flags: string[] = [];
-        if (biomarkers.spo2 && biomarkers.spo2 < 95) flags.push(`Low SpO₂ (${biomarkers.spo2.toFixed(1)}%)`);
-        if (biomarkers.hb && biomarkers.hb < 12) flags.push(`Low Hb (${biomarkers.hb.toFixed(1)} g/dL)`);
-        if (biomarkers.bilirubin && biomarkers.bilirubin > 2.0) flags.push(`Elevated Bilirubin (${biomarkers.bilirubin.toFixed(2)} mg/dL)`);
-        if (biomarkers.hr && (biomarkers.hr > 100 || biomarkers.hr < 50)) flags.push(`Abnormal HR (${Math.round(biomarkers.hr)} bpm)`);
-        if (flags.length > 0) return `Attention — ${flags.join('; ')}. Clinical review recommended.`;
-        return 'All indices remain within normal ranges. No significant autonomic dysfunction or haematological abnormalities detected.';
-    }, [biomarkers]);
+    const selectedPatientRecords = selectedPatientId ? (patientMap.get(selectedPatientId)?.records ?? []) : [];
+    const selectedPatient = selectedPatientId ? patientMap.get(selectedPatientId)?.patient : null;
 
     return (
         <div className="page-wrapper">
-            {/* Screen-only view */}
             <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 className="page-transition bg-mesh-animated no-print"
                 style={{ display: 'flex', flexDirection: 'column', gap: '24px', borderRadius: '24px', padding: '12px' }}
             >
-                <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px' }}>
+                <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                     <h1 className="glowing-heading" style={{ fontSize: '1.5rem', fontWeight: 700 }}>Statistics & History</h1>
                     <div style={{ display: 'flex', gap: '12px' }}>
                         <button className="glass" onClick={exportToCSV} style={{ padding: '10px 16px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                            <Download size={18} />
-                            Export CSV
+                            <Download size={18} /> Export CSV
                         </button>
-                        <button onClick={handlePrint} style={{
-                            padding: '10px 16px',
-                            borderRadius: '10px',
-                            background: 'var(--primary-color)',
-                            color: 'black',
-                            border: 'none',
-                            fontWeight: 600,
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '8px',
-                            cursor: 'pointer'
-                        }}>
-                            <FileDown size={18} />
-                            Generate PDF
+                        <button onClick={() => window.print()} style={{ padding: '10px 16px', borderRadius: '10px', background: 'var(--primary-color)', color: 'black', border: 'none', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                            <FileDown size={18} /> Generate PDF
                         </button>
                     </div>
                 </header>
 
-                {/* Session Selector */}
-                <div className="glass" style={{ padding: '16px 24px', borderRadius: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <Calendar size={20} color="var(--primary-color)" />
-                        <div style={{ border: 'none', background: 'none', color: 'var(--text-primary)', fontWeight: 600, fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                            {selectedSession}
-                            <ChevronDown size={16} />
+                {/* Patient List — segregated history */}
+                <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: '24px' }}>
+                    {/* Left sidebar: patient list */}
+                    <div className="glass" style={{ borderRadius: '16px', padding: '16px', maxHeight: '70vh', overflowY: 'auto' }}>
+                        <h3 style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <User size={16} /> Patients
+                        </h3>
+                        {patients.length === 0 && <p style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', textAlign: 'center', marginTop: 40 }}>No patients yet</p>}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {[...patientMap.entries()].map(([pid, { patient, records: recs }]) => (
+                                <button
+                                    key={pid}
+                                    onClick={() => { setSelectedPatientId(pid); setSelectedRecordingId(null); }}
+                                    style={{
+                                        width: '100%', padding: '12px', borderRadius: 10, cursor: 'pointer',
+                                        background: selectedPatientId === pid ? 'rgba(0,210,255,0.1)' : 'rgba(255,255,255,0.02)',
+                                        border: selectedPatientId === pid ? '1px solid rgba(0,210,255,0.3)' : '1px solid var(--border-color)',
+                                        color: 'var(--text-primary)', fontFamily: 'inherit', textAlign: 'left'
+                                    }}
+                                >
+                                    <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{patient.name}</div>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                                        {patient.age > 0 ? `${patient.age}y / ${patient.sex}` : ''} — {recs.length} recording{recs.length !== 1 ? 's' : ''}
+                                    </div>
+                                </button>
+                            ))}
                         </div>
                     </div>
-                    <div style={{ display: 'flex', gap: '24px' }}>
-                        <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-                            Patient: <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>John Doe</span>
-                        </div>
-                        <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-                            ID: <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>P-1001</span>
-                        </div>
-                    </div>
-                </div>
 
-                {/* Session Summary Cards */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '20px' }}>
-                    {metrics.map((m, idx) => (
-                        <div key={idx} className="glass" style={{ padding: '20px', borderRadius: '16px', textAlign: 'center' }}>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '8px', textTransform: 'uppercase' }}>{m.label}</div>
-                            <div style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '2px' }}>{m.value}</div>
-                            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{m.sub}</div>
-                        </div>
-                    ))}
-                </div>
+                    {/* Right: recordings for selected patient */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                        {selectedPatient ? (
+                            <>
+                                <div className="glass" style={{ padding: '16px 24px', borderRadius: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <div>
+                                        <span style={{ fontSize: '1.1rem', fontWeight: 700 }}>{selectedPatient.name}</span>
+                                        <span style={{ marginLeft: 12, fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>{selectedPatient.age > 0 ? `${selectedPatient.age}y / ${selectedPatient.sex}` : ''}</span>
+                                    </div>
+                                    <span style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>{selectedPatientRecords.length} recordings</span>
+                                </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 3fr', gap: '24px' }}>
-                    {/* HRV Analysis Panel */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                        <div className="glass hover-lift-glow" style={{ padding: '24px', borderRadius: '24px', flex: 1 }}>
-                            <h3 style={{ fontSize: '1.1rem', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                Advanced Analysis <Info size={16} color="var(--text-tertiary)" />
-                            </h3>
+                                {selectedPatientRecords.length === 0 && (
+                                    <div className="glass" style={{ padding: 40, borderRadius: 16, textAlign: 'center', color: 'var(--text-tertiary)' }}>
+                                        No recordings yet for this patient. Start a Live Recording to create one.
+                                    </div>
+                                )}
 
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-                                {hrvMetrics.map((h, i) => (
-                                    <div key={i}>
-                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '4px' }}>{h.label}</div>
-                                        <div style={{ fontSize: '1.75rem', fontWeight: 700 }}>{h.value} <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>{h.unit}</span></div>
-                                        <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px', marginTop: '8px' }}>
-                                            <div style={{ width: `${h.pct}%`, height: '100%', background: 'var(--primary-color)', borderRadius: '2px', transition: 'width 0.5s ease' }}></div>
+                                {/* Recording list */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: selectedRecordingId ? '180px' : '400px', overflowY: 'auto' }}>
+                                    {selectedPatientRecords.map(rec => {
+                                        const d = new Date(rec.timestamp);
+                                        const active = selectedRecordingId === rec.id;
+                                        return (
+                                            <div
+                                                key={rec.id}
+                                                onClick={() => setSelectedRecordingId(active ? null : rec.id)}
+                                                className="glass"
+                                                style={{
+                                                    padding: '14px 20px', borderRadius: 12, cursor: 'pointer',
+                                                    border: active ? '1px solid rgba(0,210,255,0.4)' : '1px solid var(--border-color)',
+                                                    background: active ? 'rgba(0,210,255,0.06)' : undefined,
+                                                    display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                                                }}
+                                            >
+                                                <div>
+                                                    <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>
+                                                        <Calendar size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+                                                        {d.toLocaleDateString()} {d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                    </div>
+                                                    <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: 4, display: 'flex', gap: 16 }}>
+                                                        <span><Heart size={12} style={{ verticalAlign: 'middle' }} /> HR: {rec.biomarkers.hr ? Number(rec.biomarkers.hr).toFixed(2) : '--'}</span>
+                                                        <span>SpO2: {rec.biomarkers.spo2 ? Number(rec.biomarkers.spo2).toFixed(2) : '--'}%</span>
+                                                        {rec.biomarkers.bpSys && <span>BP: {Number(rec.biomarkers.bpSys).toFixed(0)}/{Number(rec.biomarkers.bpDia).toFixed(0)}</span>}
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); deleteRecording(rec.id); }}
+                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 4 }}
+                                                    title="Delete recording"
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+
+                                {/* Selected recording details */}
+                                {selectedData && (
+                                    <>
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '16px' }}>
+                                            {metrics.map((m, idx) => (
+                                                <div key={idx} className="glass" style={{ padding: '16px', borderRadius: '14px', textAlign: 'center' }}>
+                                                    <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', marginBottom: '6px', textTransform: 'uppercase' }}>{m.label}</div>
+                                                    <div style={{ fontSize: '1.3rem', fontWeight: 700 }}>{m.value}</div>
+                                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{m.sub}</div>
+                                                </div>
+                                            ))}
                                         </div>
-                                    </div>
-                                ))}
-                            </div>
 
-                            <div style={{ marginTop: '40px', padding: '16px', borderRadius: '16px', background: 'rgba(16, 185, 129, 0.05)', border: '1px solid rgba(16, 185, 129, 0.1)' }}>
-                                <div style={{ fontSize: '0.85rem', color: 'var(--success-color)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                                    <Activity size={14} /> Clinical Summary
-                                </div>
-                                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
-                                    {clinicalSummary}
-                                </p>
-                            </div>
-                        </div>
-                    </div>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '20px' }}>
+                                            {/* HRV panel */}
+                                            <div className="glass" style={{ padding: '20px', borderRadius: '20px' }}>
+                                                <h3 style={{ fontSize: '1rem', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                    <Info size={16} color="var(--text-tertiary)" /> HRV Analysis
+                                                </h3>
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                                                    {hrvMetrics.map((h, i) => (
+                                                        <div key={i}>
+                                                            <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '4px' }}>{h.label}</div>
+                                                            <div style={{ fontSize: '1.4rem', fontWeight: 700 }}>{h.value} <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{h.unit}</span></div>
+                                                            <div style={{ width: '100%', height: '3px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px', marginTop: '6px' }}>
+                                                                <div style={{ width: `${h.pct}%`, height: '100%', background: 'var(--primary-color)', borderRadius: '2px', transition: 'width 0.5s ease' }} />
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <div style={{ marginTop: '24px', padding: '14px', borderRadius: '12px', background: 'rgba(16,185,129,0.05)', border: '1px solid rgba(16,185,129,0.1)' }}>
+                                                    <div style={{ fontSize: '0.8rem', color: 'var(--success-color)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                                        <Activity size={12} /> Clinical Summary
+                                                    </div>
+                                                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: '1.5', margin: 0 }}>{clinicalSummary}</p>
+                                                </div>
+                                            </div>
 
-                    {/* Global Trends Area */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                        <div className="glass border-spin-premium hover-lift-glow" style={{ padding: '24px', borderRadius: '24px', flex: 1.5, minHeight: '350px' }}>
-                            <h3 style={{ fontSize: '1rem', marginBottom: '24px' }}>PPG Signal — Last Session Waveform</h3>
-                            <div style={{ height: '300px' }}>
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <LineChart data={trendData}>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-                                        <XAxis dataKey="time" hide />
-                                        <YAxis stroke="var(--text-tertiary)" fontSize={12} />
-                                        <Tooltip
-                                            contentStyle={{ background: 'var(--surface-color)', border: '1px solid var(--border-color)', borderRadius: '8px' }}
-                                            itemStyle={{ fontSize: '0.8rem' }}
-                                        />
-                                        <Line type="monotone" dataKey="ppg" stroke="#ef4444" strokeWidth={2} dot={false} isAnimationActive={false} name="PPG Signal (NIR)" />
-                                    </LineChart>
-                                </ResponsiveContainer>
+                                            {/* Waveform */}
+                                            <div className="glass border-spin-premium" style={{ padding: '20px', borderRadius: '20px', minHeight: '300px' }}>
+                                                <h3 style={{ fontSize: '1rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                                                    <Wind size={16} /> Synthetic PPG Waveform
+                                                    <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginLeft: 'auto' }}>
+                                                        HR={displayBio?.hr ? displayBio.hr.toFixed(0) : '72'} bpm | RR={displayBio?.respRate ? displayBio.respRate.toFixed(0) : '16'} brpm
+                                                    </span>
+                                                </h3>
+                                                <div style={{ height: '260px' }}>
+                                                    <ResponsiveContainer width="100%" height="100%">
+                                                        <LineChart data={waveformData}>
+                                                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                                                            <XAxis dataKey="time" hide />
+                                                            <YAxis stroke="var(--text-tertiary)" fontSize={11} />
+                                                            <Tooltip contentStyle={{ background: 'var(--surface-color)', border: '1px solid var(--border-color)', borderRadius: '8px' }} itemStyle={{ fontSize: '0.8rem' }} />
+                                                            <Line type="monotone" dataKey="ppg" stroke="#ef4444" strokeWidth={2} dot={false} isAnimationActive={false} name="PPG" />
+                                                        </LineChart>
+                                                    </ResponsiveContainer>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </>
+                                )}
+                            </>
+                        ) : (
+                            <div className="glass" style={{ padding: 60, borderRadius: 20, textAlign: 'center', color: 'var(--text-tertiary)' }}>
+                                <User size={48} style={{ marginBottom: 16, opacity: 0.3 }} />
+                                <p style={{ fontSize: '1.1rem', fontWeight: 600 }}>Select a patient to view their recording history</p>
+                                <p style={{ fontSize: '0.85rem', marginTop: 8 }}>Recordings are automatically saved when a scan completes.</p>
                             </div>
-                        </div>
-
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px' }}>
-                            <div className="glass" style={{ padding: '24px', borderRadius: '24px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '16px' }}>
-                                <div style={{ width: 120, height: 120, borderRadius: '50%', border: '8px solid var(--border-color)', borderTopColor: 'var(--success-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-                                    <div style={{ textAlign: 'center' }}>
-                                        <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>94%</div>
-                                        <div style={{ fontSize: '0.6rem', color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Efficiency</div>
-                                    </div>
-                                </div>
-                                <div style={{ textAlign: 'center' }}>
-                                    <div style={{ fontWeight: 600 }}>Data Quality Score</div>
-                                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Minimal artifacts detected</div>
-                                </div>
-                            </div>
-                        </div>
+                        )}
                     </div>
                 </div>
             </motion.div>
@@ -240,16 +323,16 @@ const Statistics: React.FC = () => {
                     </div>
                     <div style={{ textAlign: 'right' }}>
                         <p style={{ fontWeight: 700, margin: 0 }}>Date: {new Date().toLocaleDateString()}</p>
-                        <p style={{ margin: 0 }}>Session ID: #1024</p>
+                        <p style={{ margin: 0 }}>Patient: {selectedPatient?.name ?? 'N/A'}</p>
                     </div>
                 </div>
 
                 <div style={{ marginBottom: '40px', background: '#f5f5f5', padding: '20px', borderRadius: '4px' }}>
                     <h2 style={{ fontSize: '14pt', borderBottom: '1px solid #ccc', paddingBottom: '5px', marginBottom: '15px' }}>PATIENT INFORMATION</h2>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                        <div><strong>Name:</strong> John Doe</div>
-                        <div><strong>Patient ID:</strong> P-1001</div>
-                        <div><strong>Age / Sex:</strong> 45 / Male</div>
+                        <div><strong>Name:</strong> {selectedPatient?.name ?? 'N/A'}</div>
+                        <div><strong>Patient ID:</strong> {selectedPatient?.id ?? 'N/A'}</div>
+                        <div><strong>Age / Sex:</strong> {selectedPatient ? `${selectedPatient.age} / ${selectedPatient.sex}` : 'N/A'}</div>
                         <div><strong>Report Type:</strong> Session Statistics</div>
                     </div>
                 </div>
@@ -276,23 +359,12 @@ const Statistics: React.FC = () => {
                     </table>
                 </div>
 
-                <div style={{ marginBottom: '40px' }}>
-                    <h2 style={{ fontSize: '14pt', borderBottom: '1px solid #ccc', paddingBottom: '5px', marginBottom: '15px' }}>CLINICAL INDICES (HRV)</h2>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
-                        {hrvMetrics.map((h, i) => (
-                            <div key={i} style={{ padding: '10px', border: '1px solid #eee', borderRadius: '4px' }}>
-                                <span style={{ color: '#666' }}>{h.label}:</span> <strong style={{ float: 'right' }}>{h.value} {h.unit}</strong>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-
                 <div style={{ marginTop: '80px', textAlign: 'center', borderTop: '1px solid #eee', paddingTop: '30px' }}>
                     <p style={{ fontSize: '12pt', fontWeight: 600, color: '#444' }}>
                         NOTE: This data is only for screening purposes.
                     </p>
                     <p style={{ fontSize: '9pt', color: '#888', marginTop: '10px' }}>
-                        IEEE JU Health Integration System • Session ID: #1024
+                        IEEE JU Health Integration System
                     </p>
                 </div>
             </div>

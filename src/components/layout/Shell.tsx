@@ -9,7 +9,8 @@ import {
   LogOut,
   Bluetooth,
   BluetoothOff,
-  User
+  User,
+  Loader2
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -17,6 +18,7 @@ import StarBackground from '../visuals/StarBackground';
 import SplineBackground from '../visuals/SplineBackground';
 
 import { BLEProvider, useBLE, BLEStatus } from '../../contexts/BLEContext';
+import { PatientStoreProvider } from '../../contexts/PatientStore';
 
 // Mock Patient Context
 const PatientContext = createContext<{
@@ -75,12 +77,14 @@ const SidebarItem: React.FC<{ item: any, index: number }> = ({ item, index }) =>
 
 const ShellContent: React.FC = () => {
   const [activePatient, setActivePatient] = useState<string | null>("John Doe");
-  const { status } = useBLE();
+  const { status, connect, disconnect } = useBLE();
 
   const isConnected = status === BLEStatus.CONNECTED ||
-    status === BLEStatus.SCANNING_40HZ ||
-    status === BLEStatus.SCANNING_200HZ ||
-    status === BLEStatus.FINISHED;
+    status === BLEStatus.IDLE ||
+    status === BLEStatus.SCANNING ||
+    status === BLEStatus.SCANNING_BP;
+
+  const isConnecting = status === BLEStatus.CONNECTING;
 
   const menuItems = [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
@@ -180,22 +184,36 @@ const ShellContent: React.FC = () => {
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '8px 16px',
-                borderRadius: '20px',
-                background: 'rgba(255,255,255,0.03)',
-                fontSize: '0.875rem',
-                border: '1px solid var(--border-color)',
-                boxShadow: '0 2px 5px rgba(0,0,0,0.1)'
-              }}>
-                {isConnected ? <Bluetooth size={16} color="var(--success-color)" /> : <BluetoothOff size={16} color="var(--error-color)" />}
-                <span style={{ textTransform: 'capitalize', color: isConnected ? 'var(--success-color)' : 'var(--error-color)', fontWeight: 600 }}>
-                  {isConnected ? 'Connected' : 'Disconnected'}
+              <button
+                onClick={isConnected ? disconnect : connect}
+                disabled={isConnecting}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '8px 18px',
+                  borderRadius: '20px',
+                  background: isConnected ? 'rgba(16,185,129,0.1)' : isConnecting ? 'rgba(255,255,255,0.03)' : 'rgba(0,210,255,0.1)',
+                  fontSize: '0.875rem',
+                  border: `1px solid ${isConnected ? 'rgba(16,185,129,0.3)' : isConnecting ? 'var(--border-color)' : 'rgba(0,210,255,0.3)'}`,
+                  boxShadow: '0 2px 5px rgba(0,0,0,0.1)',
+                  cursor: isConnecting ? 'wait' : 'pointer',
+                  color: 'inherit',
+                  fontFamily: 'inherit',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                {isConnecting ? (
+                  <Loader2 size={16} color="var(--primary-color)" className="animate-spin" />
+                ) : isConnected ? (
+                  <Bluetooth size={16} color="var(--success-color)" />
+                ) : (
+                  <BluetoothOff size={16} color="var(--error-color)" />
+                )}
+                <span style={{ fontWeight: 600, color: isConnected ? 'var(--success-color)' : isConnecting ? 'var(--primary-color)' : 'var(--error-color)' }}>
+                  {isConnecting ? 'Connecting...' : isConnected ? 'Connected' : 'Connect'}
                 </span>
-              </div>
+              </button>
               <div style={{ width: 1, height: 24, background: 'var(--border-color)' }}></div>
               <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
                 {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -218,7 +236,9 @@ const ShellContent: React.FC = () => {
 const Shell: React.FC = () => {
   return (
     <BLEProvider>
-      <ShellContent />
+      <PatientStoreProvider>
+        <ShellContent />
+      </PatientStoreProvider>
     </BLEProvider>
   );
 };

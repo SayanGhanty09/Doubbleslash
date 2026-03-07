@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
     Play,
@@ -9,21 +10,60 @@ import {
     Battery,
     Wifi,
     Cpu,
-    Shield
+    Shield,
+    UserPlus,
+    Users,
+    X
 } from 'lucide-react';
+import { useBLE, BLEStatus } from '../contexts/BLEContext';
+import { usePatientStore } from '../contexts/PatientStore';
+import type { Patient } from '../contexts/PatientStore';
+import { usePatient } from '../components/layout/Shell';
 
 const Dashboard: React.FC = () => {
-    const recentActivity = [
-        { id: 1, date: '2024-05-20', patient: 'John Doe', duration: '45m', status: 'Completed' },
-        { id: 2, date: '2024-05-19', patient: 'Jane Smith', duration: '1h 12m', status: 'Completed' },
-        { id: 3, date: '2024-05-19', patient: 'Robert Brown', duration: '12m', status: 'Aborted', error: true },
-    ];
+    const navigate = useNavigate();
+    const { status, startFullScan } = useBLE();
+    const { patients, recordings, addPatient } = usePatientStore();
+    const { setActivePatient } = usePatient();
 
-    const quickActions = [
-        { title: 'Start New Recording', icon: Play, color: 'var(--primary-color)', path: '/live' },
-        { title: 'View Last Session', icon: HistoryIcon, color: 'var(--secondary-color)', path: '/stats' },
-        { title: 'Check Updates', icon: ArrowUpCircle, color: 'var(--success-color)', path: '/console' },
-    ];
+    const isConnected = status === BLEStatus.CONNECTED ||
+        status === BLEStatus.IDLE ||
+        status === BLEStatus.SCANNING ||
+        status === BLEStatus.SCANNING_BP;
+
+    // Patient picker state
+    const [showPicker, setShowPicker] = useState(false);
+    const [newName, setNewName] = useState('');
+    const [newAge, setNewAge] = useState('');
+    const [newSex, setNewSex] = useState<'Male' | 'Female' | 'Other'>('Male');
+
+    const handleStartRecording = () => {
+        setShowPicker(true);
+    };
+
+    const launchWithPatient = (patient: Patient) => {
+        setActivePatient(patient.name);
+        setShowPicker(false);
+        // Navigate to live, passing patient info via state so LiveRecording can auto-start
+        navigate('/live', { state: { autoStartPatientId: patient.id, autoStartPatientName: patient.name } });
+    };
+
+    const handleAddAndLaunch = () => {
+        if (!newName.trim()) return;
+        const p = addPatient({ name: newName.trim(), age: parseInt(newAge) || 0, sex: newSex });
+        setNewName(''); setNewAge(''); setNewSex('Male');
+        launchWithPatient(p);
+    };
+
+    // Real recent activity from recordings
+    const recentActivity = recordings.slice(0, 5).map(r => ({
+        id: r.id,
+        date: new Date(r.timestamp).toLocaleDateString(),
+        patient: r.patientName,
+        duration: r.biomarkers.hr ? 'Completed' : 'Partial',
+        status: 'Completed' as string,
+        error: false
+    }));
 
     return (
         <motion.div
@@ -51,9 +91,14 @@ const Dashboard: React.FC = () => {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                     {/* Quick Actions */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
-                        {quickActions.map((action, idx) => (
+                        {[
+                            { title: 'Start New Recording', icon: Play, color: 'var(--primary-color)', onClick: handleStartRecording },
+                            { title: 'View Last Session', icon: HistoryIcon, color: 'var(--secondary-color)', onClick: () => navigate('/stats') },
+                            { title: 'Device Console', icon: ArrowUpCircle, color: 'var(--success-color)', onClick: () => navigate('/console') },
+                        ].map((action, idx) => (
                             <motion.div
                                 key={idx}
+                                onClick={action.onClick}
                                 whileHover={{ y: -5, scale: 1.02 }}
                                 whileTap={{ scale: 0.98 }}
                                 className="glass btn-shimmer hover-lift-glow"
@@ -88,7 +133,7 @@ const Dashboard: React.FC = () => {
                     <div className="glass" style={{ padding: '24px', borderRadius: '16px', flex: 1 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                             <h3 style={{ fontSize: '1.1rem' }}>Recent Activity Log</h3>
-                            <span style={{ fontSize: '0.8rem', color: 'var(--primary-color)', cursor: 'pointer' }}>View All</span>
+                            <span onClick={() => navigate('/stats')} style={{ fontSize: '0.8rem', color: 'var(--primary-color)', cursor: 'pointer' }}>View All</span>
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                             {recentActivity.map((log) => (
@@ -193,6 +238,62 @@ const Dashboard: React.FC = () => {
                     </div>
                 </div>
             </div>
+
+            {/* Patient Picker Popup */}
+            {showPicker && (
+                <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}
+                    onClick={() => setShowPicker(false)}>
+                    <div className="glass" onClick={e => e.stopPropagation()} style={{ width: 420, maxHeight: '80vh', borderRadius: 20, padding: 28, overflow: 'auto', border: '1px solid var(--border-color)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                            <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Select Patient</h3>
+                            <button onClick={() => setShowPicker(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}><X size={20} /></button>
+                        </div>
+
+                        {patients.length > 0 && (
+                            <div style={{ marginBottom: 20 }}>
+                                <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: 8 }}>
+                                    <Users size={14} style={{ verticalAlign: 'middle', marginRight: 6 }} />Existing Patients
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 200, overflowY: 'auto' }}>
+                                    {patients.map(p => (
+                                        <button key={p.id} onClick={() => launchWithPatient(p)}
+                                            style={{ width: '100%', padding: '10px 14px', borderRadius: 10, cursor: 'pointer',
+                                                background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-color)',
+                                                color: 'var(--text-primary)', fontFamily: 'inherit', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <span style={{ fontWeight: 600 }}>{p.name}</span>
+                                            <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{p.age > 0 ? `${p.age}y / ${p.sex}` : ''}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 16 }}>
+                            <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: 10 }}>
+                                <UserPlus size={14} style={{ verticalAlign: 'middle', marginRight: 6 }} />New Patient
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Full name"
+                                    style={{ padding: 10, borderRadius: 8, border: '1px solid var(--border-color)', background: 'rgba(255,255,255,0.03)', color: 'var(--text-primary)', outline: 'none' }} />
+                                <div style={{ display: 'flex', gap: 10 }}>
+                                    <input value={newAge} onChange={e => setNewAge(e.target.value)} placeholder="Age" type="number"
+                                        style={{ flex: 1, padding: 10, borderRadius: 8, border: '1px solid var(--border-color)', background: 'rgba(255,255,255,0.03)', color: 'var(--text-primary)', outline: 'none' }} />
+                                    <select value={newSex} onChange={e => setNewSex(e.target.value as any)}
+                                        style={{ flex: 1, padding: 10, borderRadius: 8, border: '1px solid var(--border-color)', background: 'rgba(255,255,255,0.03)', color: 'var(--text-primary)', outline: 'none' }}>
+                                        <option value="Male">Male</option>
+                                        <option value="Female">Female</option>
+                                        <option value="Other">Other</option>
+                                    </select>
+                                </div>
+                                <button onClick={handleAddAndLaunch}
+                                    style={{ width: '100%', padding: '12px', borderRadius: 10, background: 'var(--primary-color)', color: 'black', border: 'none', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                                    <Play size={16} /> Add & Start Recording
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </motion.div>
     );
 };

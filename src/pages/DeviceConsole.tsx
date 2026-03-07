@@ -22,9 +22,9 @@ const DeviceConsole: React.FC = () => {
     const scrollRef = useRef<HTMLDivElement>(null);
 
     const isConnected = status === BLEStatus.CONNECTED ||
-        status === BLEStatus.SCANNING_40HZ ||
-        status === BLEStatus.SCANNING_200HZ ||
-        status === BLEStatus.FINISHED;
+        status === BLEStatus.IDLE ||
+        status === BLEStatus.SCANNING ||
+        status === BLEStatus.SCANNING_BP;
 
     const isConnecting = status === BLEStatus.CONNECTING;
 
@@ -39,9 +39,10 @@ const DeviceConsole: React.FC = () => {
 
         // Basic mapping for demo/manual commands
         const cmdMap: Record<string, number> = {
-            "START_40": 0x01,
-            "START_200": 0x03,
-            "STOP": 0x02,
+            "START": 0x01,
+            "START_NORMAL": 0x01,
+            "START_BP": 0x02,
+            "STOP": 0x00,
         };
 
         const cmd = cmdMap[input.toUpperCase()] || parseInt(input, 16);
@@ -186,7 +187,8 @@ const DeviceConsole: React.FC = () => {
 
                     <div
                         ref={scrollRef}
-                        style={{ flex: 1, padding: '20px', fontFamily: 'Roboto Mono', fontSize: '0.85rem', color: 'var(--text-primary)', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}
+                        className="scroll-hide"
+                        style={{ flex: 1, padding: '20px', fontFamily: 'Roboto Mono', fontSize: '0.85rem', color: 'var(--text-primary)', overflowY: 'auto', maxHeight: '450px', display: 'flex', flexDirection: 'column', gap: '4px' }}
                     >
                         {logs.map((log, idx) => (
                             <div key={idx} style={{
@@ -204,7 +206,7 @@ const DeviceConsole: React.FC = () => {
                     <div style={{ padding: '20px', background: 'rgba(0,0,0,0.2)', borderTop: '1px solid var(--border-color)', display: 'flex', gap: '12px' }}>
                         <input
                             type="text"
-                            placeholder={isConnected ? "Enter command (e.g. START_40, STOP)..." : "Connect device to send commands..."}
+                            placeholder={isConnected ? "Enter command (e.g. START, START_BP, STOP)..." : "Connect device to send commands..."}
                             value={input}
                             disabled={!isConnected}
                             onChange={(e) => setInput(e.target.value)}
