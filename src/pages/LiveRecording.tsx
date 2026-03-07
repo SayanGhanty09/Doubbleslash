@@ -226,32 +226,37 @@ const LiveRecording: React.FC = () => {
   // UI Render
   // ======================
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ padding: 20, fontFamily: "sans-serif" }}>
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="page-transition" style={{ padding: "20px" }}>
       
       {/* HEADER */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-        <h1>Live Monitoring</h1>
-        <p style={{ fontWeight: "bold", color: "#555" }}>
-          Patient: {activePatient || "Guest"} | Time: {formatTime(seconds)}
-        </p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 30 }}>
+        <h1 className="glowing-heading" style={{ margin: 0, fontSize: "2.2rem" }}>Live Monitoring</h1>
+        <div className="glass" style={{ padding: "8px 16px", borderRadius: "20px", border: "1px solid var(--border-color)" }}>
+          <p style={{ margin: 0, fontWeight: "500", color: "var(--text-secondary)", fontSize: "0.95rem" }}>
+            Patient: <span style={{ color: "var(--text-primary)" }}>{activePatient || "Guest"}</span> <span style={{ margin: "0 10px", opacity: 0.3 }}>|</span> Time: <span style={{ color: "var(--primary-color)", fontFamily: "monospace", fontSize: "1.05rem" }}>{formatTime(seconds)}</span>
+          </p>
+        </div>
       </div>
 
       {/* VITAL CARDS */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 20, marginBottom: 30 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 24, marginBottom: 40 }}>
         {vitalCards.map((card, i) => {
           const Icon = card.icon;
           return (
-            <div key={i} style={{ padding: 20, border: "1px solid #3a2a5d", borderRadius: 12, backgroundColor: "#564a74", boxShadow: "0 2px 4px rgba(0,0,0,0.05)" }}>
-              <Icon color={card.color} size={24} style={{ marginBottom: 10 }} />
-              <h2 style={{ margin: "5px 0", fontSize: "1.5rem" }}>{card.value}</h2>
-              <p style={{ margin: 0, color: "#ffff", fontSize: "0.9rem" }}>{card.label} ({card.unit})</p>
+            <div key={i} className="glass card-glow vital-card-edge-glow hover-lift-glow" style={{ padding: "24px", borderRadius: "16px", display: "flex", flexDirection: "column", '--card-color': card.color } as React.CSSProperties}>
+              <Icon color={card.color} size={28} style={{ marginBottom: 16 }} />
+              <h2 style={{ margin: "0 0 5px 0", fontSize: "2rem", color: "var(--text-primary)", fontWeight: "600" }}>{card.value}</h2>
+              <p style={{ margin: 0, color: "var(--text-secondary)", fontSize: "0.95rem", fontWeight: "500" }}>{card.label} <span style={{ opacity: 0.6, fontSize: "0.85rem" }}>({card.unit})</span></p>
             </div>
           );
         })}
       </div>
 
       {/* WAVEFORM */}
-      <div style={{ marginBottom: 30 }}>
+      <div className="glass card-glow" style={{ marginBottom: 40, padding: 20, borderRadius: 16 }}>
+        <h3 style={{ margin: "0 0 20px 0", color: "var(--text-primary)", fontSize: "1.2rem", display: "flex", alignItems: "center", gap: 10 }}>
+          <ActivityIcon size={20} color="var(--primary-color)" /> Real-Time ECG Waveform
+        </h3>
         <VitalsScalePanel waveformSamples={waveformSamples} hrBpm={biomarkers?.hr} />
       </div>
 
@@ -259,92 +264,99 @@ const LiveRecording: React.FC = () => {
       <button 
         onClick={generateAIReport} 
         disabled={isAnalyzing}
-        style={{ padding: "12px 20px", backgroundColor: "#10b981", color: "white", border: "none", borderRadius: 8, cursor: isAnalyzing ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 10, fontSize: "1rem", fontWeight: "bold" }}
+        className="btn-shimmer hover-lift-glow"
+        style={{ padding: "14px 28px", color: "var(--text-primary)", border: "none", borderRadius: "12px", cursor: isAnalyzing ? "not-allowed" : "pointer", display: "inline-flex", alignItems: "center", gap: 10, fontSize: "1.1rem", fontWeight: "600" }}
       >
-        {isAnalyzing ? <Loader2 className="animate-spin" size={20} /> : <FileText size={20} />}
+        {isAnalyzing ? <Loader2 className="animate-spin" size={22} /> : <FileText size={22} />}
         {isAnalyzing ? "Analyzing Vitals..." : "Generate AI Report"}
       </button>
 
       {/* AI REPORT DISPLAY */}
       {analysisResult && (
-        <div style={{ marginTop: 30, padding: 25, backgroundColor: "#f8fafc", borderRadius: 12, border: "1px solid #e2e8f0" }}>
-          <h2 style={{ marginTop: 0, display: "flex", alignItems: "center", gap: 10 }}>
-            <ActivityIcon color="#2563eb" /> AI Clinical Analysis
+        <div className="glass border-spin-premium" style={{ marginTop: 40, padding: 30, borderRadius: 16 }}>
+          <h2 className="glowing-heading" style={{ marginTop: 0, display: "flex", alignItems: "center", gap: 12, fontSize: "1.8rem" }}>
+            <ActivityIcon color="var(--primary-color)" size={28} /> AI Clinical Analysis
           </h2>
           
-          <div style={{ display: "flex", alignItems: "center", gap: 15, marginBottom: 20 }}>
-            <h1 style={{ margin: 0, color: analysisResult.healthScore >= 7.5 ? "#10b981" : "#f59e0b" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 30, flexWrap: "wrap" }}>
+            <h1 style={{ margin: 0, color: analysisResult.healthScore >= 7.5 ? "var(--success-color)" : "var(--warning-color)", fontSize: "2.5rem" }}>
               Score: {analysisResult.healthScore}/10
             </h1>
             
             {/* EMAIL PDF BUTTON */}
             <button 
               onClick={() => setIsModalOpen(true)}
-              style={{ padding: "8px 16px", backgroundColor: "#2563eb", color: "white", border: "none", borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}
+              className="btn-shimmer hover-lift-glow"
+              style={{ padding: "10px 20px", color: "var(--text-primary)", borderRadius: "8px", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, fontWeight: "500", border: "1px solid var(--secondary-color)", marginLeft: "auto" }}
             >
-              <Mail size={16} /> Email PDF Report
+              <Mail size={18} /> Email PDF Report
             </button>
           </div>
 
-          <div style={{ display: "grid", gap: 15 }}>
-            <div style={{ backgroundColor: "#fff", padding: 15, borderRadius: 8, border: "1px solid #e2e8f0" }}>
-              <strong>Summary:</strong> <p style={{ margin: "5px 0 0 0" }}>{analysisResult.general}</p>
+          <div style={{ display: "grid", gap: 20 }}>
+            <div style={{ background: "rgba(255,255,255,0.03)", padding: 20, borderRadius: 12, border: "1px solid var(--border-color)" }}>
+              <strong style={{ color: "var(--primary-color)", fontSize: "1.1rem" }}>Summary:</strong> 
+              <p style={{ margin: "10px 0 0 0", color: "var(--text-primary)", lineHeight: 1.6 }}>{analysisResult.general}</p>
             </div>
-            <div style={{ backgroundColor: "#fff", padding: 15, borderRadius: 8, border: "1px solid #e2e8f0" }}>
-              <strong>Detailed Report:</strong> <p style={{ margin: "5px 0 0 0" }}>{analysisResult.report}</p>
+            <div style={{ background: "rgba(255,255,255,0.03)", padding: 20, borderRadius: 12, border: "1px solid var(--border-color)" }}>
+              <strong style={{ color: "var(--primary-color)", fontSize: "1.1rem" }}>Detailed Report:</strong> 
+              <p style={{ margin: "10px 0 0 0", color: "var(--text-primary)", lineHeight: 1.6 }}>{analysisResult.report}</p>
             </div>
-            <div style={{ backgroundColor: "#eff6ff", padding: 15, borderRadius: 8, border: "1px solid #bfdbfe" }}>
-              <strong style={{ color: "#1d4ed8" }}>Recommended Action:</strong> <p style={{ margin: "5px 0 0 0", color: "#1e3a8a" }}>{analysisResult.whatnow}</p>
+            <div style={{ background: "rgba(16, 185, 129, 0.1)", padding: 20, borderRadius: 12, border: "1px solid rgba(16, 185, 129, 0.2)" }}>
+              <strong style={{ color: "var(--success-color)", fontSize: "1.1rem" }}>Recommended Action:</strong> 
+              <p style={{ margin: "10px 0 0 0", color: "var(--text-primary)", lineHeight: 1.6 }}>{analysisResult.whatnow}</p>
             </div>
           </div>
         </div>
       )}
 
       {/* CHAT SECTION */}
-      <div style={{ marginTop: 40, padding: 25, backgroundColor: "#110920", borderRadius: 12, border: "1px solid #e2e8f0" }}>
-        <h3 style={{ marginTop: 0, display: "flex", alignItems: "center", gap: 10 }}>
-          <MessageSquare size={20} color="#8b5cf6" /> Ask the Medical AI
+      <div className="glass card-glow" style={{ marginTop: 40, padding: 30, borderRadius: 16 }}>
+        <h3 className="glowing-heading" style={{ marginTop: 0, display: "flex", alignItems: "center", gap: 12, fontSize: "1.5rem" }}>
+          <MessageSquare size={24} color="var(--primary-color)" /> Ask the Medical AI
         </h3>
-        <p style={{ color: "#666", fontSize: "0.9rem" }}>Generate an AI report first to chat about your results.</p>
+        <p style={{ color: "var(--text-secondary)", fontSize: "0.95rem", marginBottom: 20 }}>Generate an AI report first to chat about your results.</p>
 
-        <div style={{ maxHeight: 300, overflowY: "auto", padding: 10, display: "flex", flexDirection: "column", gap: 10, backgroundColor: "#f8fafc", borderRadius: 8, marginBottom: 15, minHeight: 100 }}>
-          {chatHistory.length === 0 && <p style={{ color: "#94a3b8", textAlign: "center", marginTop: 30 }}>No messages yet...</p>}
+        <div className="scroll-hide" style={{ maxHeight: 350, overflowY: "auto", padding: 15, display: "flex", flexDirection: "column", gap: 12, background: "rgba(0,0,0,0.2)", border: "1px solid var(--border-color)", borderRadius: 12, marginBottom: 20, minHeight: 150 }}>
+          {chatHistory.length === 0 && <p style={{ color: "var(--text-tertiary)", textAlign: "center", marginTop: 40 }}>No messages yet...</p>}
           
           {chatHistory.map((msg, i) => {
             const isUser = msg.sender === "You";
             return (
               <div key={i} style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start" }}>
                 <div style={{ 
-                  maxWidth: "75%", 
-                  padding: "10px 15px", 
-                  borderRadius: 15, 
-                  backgroundColor: isUser ? "#3b82f6" : "#e2e8f0", 
-                  color: isUser ? "white" : "#1e293b",
-                  borderBottomRightRadius: isUser ? 0 : 15,
-                  borderBottomLeftRadius: isUser ? 15 : 0
+                  maxWidth: "80%", 
+                  padding: "12px 18px", 
+                  borderRadius: 16, 
+                  backgroundColor: isUser ? "rgba(0, 210, 255, 0.15)" : "rgba(255, 255, 255, 0.05)", 
+                  color: "var(--text-primary)",
+                  border: `1px solid ${isUser ? 'rgba(0, 210, 255, 0.3)' : 'var(--border-color)'}`,
+                  borderBottomRightRadius: isUser ? 4 : 16,
+                  borderBottomLeftRadius: isUser ? 16 : 4
                 }}>
-                  <b style={{ display: "block", fontSize: "0.8rem", opacity: 0.8, marginBottom: 4 }}>{msg.sender}</b>
-                  {msg.text}
+                  <b style={{ display: "block", fontSize: "0.8rem", color: isUser ? "var(--primary-color)" : "var(--text-secondary)", opacity: 0.9, marginBottom: 6 }}>{msg.sender}</b>
+                  <div style={{ lineHeight: 1.5 }}>{msg.text}</div>
                 </div>
               </div>
             );
           })}
-          {isChatting && <div style={{ color: "#64748b", fontStyle: "italic", marginLeft: 10 }}>AI is typing...</div>}
+          {isChatting && <div style={{ color: "var(--text-tertiary)", fontStyle: "italic", marginLeft: 15 }}>AI is typing...</div>}
         </div>
 
-        <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ display: "flex", gap: 12 }}>
           <input
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
             placeholder="E.g. What does my SDNN score mean?"
-            style={{ flex: 1, padding: "12px 15px", borderRadius: 8, border: "1px solid #cbd5e1", outline: "none" }}
+            style={{ flex: 1, padding: "14px 20px", borderRadius: 12, border: "1px solid var(--border-color)", outline: "none", background: "rgba(0,0,0,0.3)", color: "var(--text-primary)", fontSize: "1rem" }}
             disabled={!reportId}
           />
           <button 
             onClick={sendMessage} 
             disabled={isChatting || !reportId}
-            style={{ padding: "0 20px", backgroundColor: reportId ? "#8b5cf6" : "#cbd5e1", color: "white", border: "none", borderRadius: 8, cursor: reportId ? "pointer" : "not-allowed", display: "flex", alignItems: "center", gap: 8 }}
+            className={reportId ? "btn-shimmer hover-lift-glow" : ""}
+            style={{ padding: "0 24px", backgroundColor: reportId ? "transparent" : "rgba(255,255,255,0.05)", color: reportId ? "var(--text-primary)" : "var(--text-tertiary)", border: reportId ? "1px solid var(--secondary-color)" : "1px solid var(--border-color)", borderRadius: 12, cursor: reportId ? "pointer" : "not-allowed", display: "flex", alignItems: "center", gap: 10, fontWeight: "500", fontSize: "1rem" }}
           >
             <Send size={18} /> Send
           </button>
@@ -355,53 +367,56 @@ const LiveRecording: React.FC = () => {
       {isModalOpen && (
         <div style={{
           position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh",
-          backgroundColor: "rgba(0,0,0,0.6)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 50
+          backgroundColor: "rgba(0,0,0,0.8)", backdropFilter: "blur(4px)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 100
         }}>
           <motion.div 
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            style={{ backgroundColor: "white", padding: 30, borderRadius: 12, width: "350px", display: "flex", flexDirection: "column", gap: 15, boxShadow: "0 10px 25px rgba(0,0,0,0.2)" }}
+            className="glass border-spin-premium"
+            style={{ padding: 35, borderRadius: 20, width: "400px", maxWidth: "90%", display: "flex", flexDirection: "column", gap: 20 }}
           >
-            <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: 10 }}>
-              <Mail size={20} color="#2563eb" /> Send Report
+            <h3 className="glowing-heading" style={{ margin: 0, display: "flex", alignItems: "center", gap: 12, fontSize: "1.5rem" }}>
+              <Mail size={24} color="var(--primary-color)" /> Send Report
             </h3>
             
-            <div>
-              <label style={{ fontSize: "0.85rem", fontWeight: "bold", color: "#475569" }}>Patient Name</label>
-              <input 
-                placeholder="John Doe" 
-                value={emailForm.name}
-                onChange={(e) => setEmailForm({...emailForm, name: e.target.value})}
-                style={{ width: "93%", padding: 10, borderRadius: 6, border: "1px solid #cbd5e1", marginTop: 5 }}
-              />
-            </div>
-            
-            <div>
-              <label style={{ fontSize: "0.85rem", fontWeight: "bold", color: "#475569" }}>Patient Age</label>
-              <input 
-                placeholder="30" 
-                type="number"
-                value={emailForm.age}
-                onChange={(e) => setEmailForm({...emailForm, age: e.target.value})}
-                style={{ width: "93%", padding: 10, borderRadius: 6, border: "1px solid #cbd5e1", marginTop: 5 }}
-              />
-            </div>
-            
-            <div>
-              <label style={{ fontSize: "0.85rem", fontWeight: "bold", color: "#475569" }}>Recipient Email</label>
-              <input 
-                placeholder="doctor@clinic.com" 
-                type="email"
-                value={emailForm.email}
-                onChange={(e) => setEmailForm({...emailForm, email: e.target.value})}
-                style={{ width: "93%", padding: 10, borderRadius: 6, border: "1px solid #cbd5e1", marginTop: 5 }}
-              />
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div>
+                <label style={{ fontSize: "0.9rem", fontWeight: "500", color: "var(--text-secondary)", marginBottom: 8, display: "block" }}>Patient Name</label>
+                <input 
+                  placeholder="John Doe" 
+                  value={emailForm.name}
+                  onChange={(e) => setEmailForm({...emailForm, name: e.target.value})}
+                  style={{ width: "100%", padding: "12px 16px", borderRadius: 8, border: "1px solid var(--border-color)", background: "rgba(0,0,0,0.3)", color: "var(--text-primary)", outline: "none" }}
+                />
+              </div>
+              
+              <div>
+                <label style={{ fontSize: "0.9rem", fontWeight: "500", color: "var(--text-secondary)", marginBottom: 8, display: "block" }}>Patient Age</label>
+                <input 
+                  placeholder="30" 
+                  type="number"
+                  value={emailForm.age}
+                  onChange={(e) => setEmailForm({...emailForm, age: e.target.value})}
+                  style={{ width: "100%", padding: "12px 16px", borderRadius: 8, border: "1px solid var(--border-color)", background: "rgba(0,0,0,0.3)", color: "var(--text-primary)", outline: "none" }}
+                />
+              </div>
+              
+              <div>
+                <label style={{ fontSize: "0.9rem", fontWeight: "500", color: "var(--text-secondary)", marginBottom: 8, display: "block" }}>Recipient Email</label>
+                <input 
+                  placeholder="doctor@clinic.com" 
+                  type="email"
+                  value={emailForm.email}
+                  onChange={(e) => setEmailForm({...emailForm, email: e.target.value})}
+                  style={{ width: "100%", padding: "12px 16px", borderRadius: 8, border: "1px solid var(--border-color)", background: "rgba(0,0,0,0.3)", color: "var(--text-primary)", outline: "none" }}
+                />
+              </div>
             </div>
 
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 15 }}>
+            <div style={{ display: "flex", gap: 12, justifyContent: "flex-end", marginTop: 10 }}>
               <button 
                 onClick={() => setIsModalOpen(false)} 
-                style={{ padding: "10px 15px", backgroundColor: "#f1f5f9", color: "#475569", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: "bold" }}
+                style={{ padding: "12px 20px", background: "rgba(255,255,255,0.05)", color: "var(--text-primary)", border: "1px solid var(--border-color)", borderRadius: 8, cursor: "pointer", fontWeight: "500" }}
                 disabled={isSendingEmail}
               >
                 Cancel
@@ -409,10 +424,11 @@ const LiveRecording: React.FC = () => {
               
               <button 
                 onClick={triggerPdfEmail} 
-                style={{ padding: "10px 15px", backgroundColor: "#2563eb", color: "white", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: "bold", display: "flex", alignItems: "center", gap: 8 }}
+                className="btn-shimmer hover-lift-glow"
+                style={{ padding: "12px 20px", color: "var(--text-primary)", border: "1px solid var(--primary-color)", borderRadius: 8, cursor: "pointer", fontWeight: "600", display: "flex", alignItems: "center", gap: 8 }}
                 disabled={isSendingEmail}
               >
-                {isSendingEmail ? <Loader2 className="animate-spin" size={16} /> : <Send size={16} />}
+                {isSendingEmail ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
                 {isSendingEmail ? "Sending..." : "Send PDF"}
               </button>
             </div>
