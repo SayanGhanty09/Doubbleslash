@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
     Heart,
     Wind,
     Activity as ActivityIcon,
     Droplets,
+    FlaskConical,
     Square,
     AlertCircle,
     Brain,
@@ -16,24 +17,40 @@ import { useBLE, BLEStatus } from '../contexts/BLEContext';
 
 const LiveRecording: React.FC = () => {
     const { activePatient } = usePatient();
-    const { status, waveform, biomarkers, sendCommand } = useBLE();
+    const { status, waveformSamples, biomarkers, sendCommand } = useBLE();
     const [seconds, setSeconds] = useState(0);
 
     const isConnected = status !== BLEStatus.DISCONNECTED && status !== BLEStatus.CONNECTING;
     const isRecording = status === BLEStatus.SCANNING_40HZ || status === BLEStatus.SCANNING_200HZ;
     const isFinished = status === BLEStatus.FINISHED;
 
+    // Use a ref so the interval callback always sees the latest status without
+    // needing to be in the dependency array (avoids restarting the interval on
+    // every status tick).
+    const statusRef = useRef(status);
+    useEffect(() => { statusRef.current = status; });
+
     useEffect(() => {
-        let interval: any;
+        let interval: ReturnType<typeof setInterval> | undefined;
         if (isRecording) {
             interval = setInterval(() => {
-                setSeconds(s => s + 1);
+                setSeconds(prev => {
+                    const next = prev + 1;
+                    // Auto-stop at 30 s for 40 Hz scan if the device status
+                    // notification has not already arrived.
+                    if (next >= 30 && statusRef.current === BLEStatus.SCANNING_40HZ) {
+                        clearInterval(interval);
+                        sendCommand(0x02);
+                        return 30;
+                    }
+                    return next;
+                });
             }, 1000);
         } else if (!isFinished) {
             setSeconds(0);
         }
         return () => clearInterval(interval);
-    }, [isRecording, isFinished]);
+    }, [isRecording, isFinished, sendCommand]);
 
     const formatTime = (s: number) => {
         const mins = Math.floor(s / 60);
@@ -65,6 +82,7 @@ const LiveRecording: React.FC = () => {
 
         return [
             ...baseCards,
+            { label: 'Hemoglobin', value: biomarkers?.hb ? biomarkers.hb.toFixed(1) : '--', unit: 'g/dL', icon: FlaskConical, color: '#a855f7' },
             { label: 'Bilirubin', value: biomarkers?.bilirubin ? biomarkers.bilirubin.toFixed(2) : '--', unit: 'mg/dL', icon: ActivityIcon, color: '#f59e0b' },
             { label: 'Stress Index', value: biomarkers?.stress || '--', unit: '', icon: Brain, color: '#10b981' },
         ];
@@ -153,7 +171,7 @@ const LiveRecording: React.FC = () => {
             </div>
 
             {/* Main Monitoring Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: '20px' }}>
                 {vitalCards.map((card, idx) => (
                     <motion.div
                         key={idx}
@@ -200,7 +218,7 @@ const LiveRecording: React.FC = () => {
                     </div>
                     <div style={{ flex: 1, minHeight: '300px' }}>
                         {/* waveformData passed to panel for visualization */}
-                        <VitalsScalePanel waveformData={waveform} />
+                        <VitalsScalePanel waveformSamples={waveformSamples} hrBpm={biomarkers?.hr} sqi={biomarkers?.sqi} />
                     </div>
                 </div>
 

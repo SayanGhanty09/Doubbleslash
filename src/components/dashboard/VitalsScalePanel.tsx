@@ -1,123 +1,150 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { motion } from 'framer-motion';
-import { Activity, ThermometerSun, AlertTriangle, Wind, HeartPulse } from 'lucide-react';
-import { ResponsiveContainer, LineChart, Line, YAxis, XAxis } from 'recharts';
-
-interface VitalMetric {
-    name: string;
-    value: number; // 1 to 10
-    icon: React.ElementType;
-    color: string;
-}
+import React, { useMemo } from 'react';
+import { Heart, Activity } from 'lucide-react';
+import {
+    ResponsiveContainer,
+    AreaChart,
+    Area,
+    YAxis,
+    XAxis,
+    ReferenceLine,
+} from 'recharts';
+import type { WaveformSample } from '../../contexts/BLEContext';
 
 interface VitalsScalePanelProps {
-    waveformData?: number[];
+    waveformSamples?: WaveformSample[];
+    hrBpm?: number;
+    sqi?: number;
 }
 
-const VitalsScalePanel: React.FC<VitalsScalePanelProps> = ({ waveformData }) => {
-    // Initial simulated values on a 1-10 scale
-    const [metrics, setMetrics] = useState<VitalMetric[]>([
-        { name: 'Stress Level', value: 3, icon: Activity, color: '#f59e0b' },
-        { name: 'Anemia', value: 2, icon: AlertTriangle, color: '#ef4444' },
-        { name: 'Jaundice', value: 1, icon: ThermometerSun, color: '#eab308' },
-        { name: 'Coughless', value: 8, icon: Wind, color: '#10b981' }, // 10 = perfectly coughless, 1 = severe cough
-        { name: 'Blood Pressure', value: 5, icon: HeartPulse, color: '#00d2ff' } // 5 = normal, 10 = severe hypertension
-    ]);
-
-    // Format waveform for recharts
+const VitalsScalePanel: React.FC<VitalsScalePanelProps> = ({ waveformSamples, hrBpm, sqi }) => {
     const chartData = useMemo(() => {
-        if (!waveformData) return [];
-        return waveformData.map((val, i) => ({ time: i, val }));
-    }, [waveformData]);
-
-    // Simulate slight fluctuations for a "live" feel
-    useEffect(() => {
-        if (waveformData) return; // Disable simulation if real data is present
-        const interval = setInterval(() => {
-            setMetrics(prev => prev.map(m => {
-                if (Math.random() > 0.7) {
-                    let move = Math.random() > 0.5 ? 1 : -1;
-                    let newVal = Math.max(1, Math.min(10, m.value + move));
-                    if ((m.name === 'Jaundice' || m.name === 'Anemia') && Math.random() > 0.2) {
-                        newVal = m.value;
-                    }
-                    return { ...m, value: newVal };
+        if (!waveformSamples || waveformSamples.length < 20) return null;
+        // Keep last 300 samples (~7.5 s @ 40 Hz)
+        const recent = waveformSamples.slice(-300);
+        // Remove DC baseline
+        const mean = recent.reduce((a, b) => a + b.nir, 0) / recent.length;
+        const raw = recent.map(s => s.nir - mean);
+        // 7-point weighted moving average — suppresses high-frequency noise
+        // while preserving the PPG pulse shape (0.5–4 Hz).
+        const weights = [0.05, 0.1, 0.2, 0.3, 0.2, 0.1, 0.05];
+        const vals = raw.map((_, i) => {
+            let sum = 0, wSum = 0;
+            for (let j = -3; j <= 3; j++) {
+                const k = i + j;
+                if (k >= 0 && k < raw.length) {
+                    sum += raw[k] * weights[j + 3];
+                    wSum += weights[j + 3];
                 }
-                return m;
-            }));
-        }, 3000);
+            }
+            return sum / wSum;
+        });
+        // Normalise to [-100, 100]
+        const maxAbs = Math.max(...vals.map(Math.abs), 1);
+        // Use the device timestamp as x so the chart scrolls as new data arrives
+        return recent.map((s, i) => ({ t: s.t, val: (vals[i] / maxAbs) * 100 }));
+    }, [waveformSamples]);
 
-        return () => clearInterval(interval);
-    }, [waveformData]);
+    const hasData = (chartData?.length ?? 0) > 20;
 
-    const getColorForValue = (value: number, name: string) => {
-        const isHigherBetter = name === 'Coughless';
-        let normalized = value;
-        if (isHigherBetter) normalized = 11 - value;
-        if (normalized <= 3) return '#10b981';
-        if (normalized <= 6) return '#eab308';
-        return '#ef4444';
-    };
+    const hrColor = !hrBpm
+        ? 'var(--text-tertiary)'
+        : hrBpm > 100 || hrBpm < 50 ? '#ef4444'
+        : hrBpm > 90 || hrBpm < 60 ? '#f59e0b'
+        : '#10b981';
 
-    if (waveformData) {
-        return (
-            <div style={{ width: '100%', height: '100%', minHeight: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {chartData.length > 0 ? (
+    return (
+        <div style={{ width: '100%', height: '100%', minHeight: '260px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Heart
+                        size={16}
+                        color="#ef4444"
+                        style={{
+                            filter: hasData ? 'drop-shadow(0 0 6px #ef4444)' : 'none',
+                            animation: hasData ? 'ppg-heartbeat 0.8s ease-in-out infinite' : 'none',
+                        }}
+                    />
+                    <span style={{ fontSize: '0.75rem', fontFamily: 'Roboto Mono', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                        PPG HEARTRATE SIGNAL
+                    </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    {sqi !== undefined && (
+                        <span style={{
+                            fontSize: '0.7rem', fontFamily: 'Roboto Mono',
+                            color: sqi > 70 ? '#10b981' : sqi > 40 ? '#f59e0b' : '#ef4444',
+                        }}>
+                            SQI {sqi}%
+                        </span>
+                    )}
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
+                        <span style={{ fontSize: '1.4rem', fontWeight: 700, color: hrColor, fontFamily: 'Roboto Mono' }}>
+                            {hrBpm ? hrBpm.toFixed(0) : '--'}
+                        </span>
+                        <span style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>bpm</span>
+                    </div>
+                </div>
+            </div>
+
+            {/* Chart surface */}
+            <div style={{
+                flex: 1,
+                minHeight: '200px',
+                filter: hasData ? 'drop-shadow(0 0 5px rgba(239,68,68,0.35))' : 'none',
+            }}>
+                {hasData ? (
                     <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={chartData}>
-                            <YAxis hide domain={['auto', 'auto']} />
-                            <XAxis hide />
-                            <Line
+                        <AreaChart data={chartData ?? []} margin={{ top: 10, right: 8, bottom: 10, left: 0 }}>
+                            <defs>
+                                <linearGradient id="ppgGrad" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="5%" stopColor="#ef4444" stopOpacity={0.22} />
+                                    <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                                </linearGradient>
+                            </defs>
+                            <YAxis hide domain={[-110, 110]} />
+                            <XAxis hide dataKey="t" type="number" domain={['dataMin', 'dataMax']} />
+                            <ReferenceLine y={0} stroke="rgba(255,255,255,0.06)" strokeDasharray="4 4" />
+                            <Area
                                 type="monotone"
                                 dataKey="val"
-                                stroke="var(--primary-color)"
-                                strokeWidth={3}
+                                stroke="#ef4444"
+                                strokeWidth={2}
+                                fill="url(#ppgGrad)"
                                 dot={false}
                                 isAnimationActive={false}
                             />
-                        </LineChart>
+                        </AreaChart>
                     </ResponsiveContainer>
                 ) : (
-                    <div style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>Waiting for waveform stream...</div>
+                    <div style={{
+                        width: '100%',
+                        height: '100%',
+                        minHeight: '200px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '12px',
+                        border: '1px dashed rgba(255,255,255,0.08)',
+                        borderRadius: '16px',
+                    }}>
+                        <Activity size={32} color="var(--text-tertiary)" style={{ opacity: 0.3 }} />
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', textAlign: 'center' }}>
+                            Waveform stream inactive<br />
+                            <span style={{ fontSize: '0.7rem', opacity: 0.6 }}>Start a scan to see the live PPG signal</span>
+                        </div>
+                    </div>
                 )}
             </div>
-        );
-    }
 
-    return (
-        <div className="glass" style={{ flex: 1, borderRadius: '24px', padding: '24px', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.2rem', fontWeight: 700 }}>
-                    <Activity size={20} color="var(--primary-color)" />
-                    Clinical AI Analysis
-                </h3>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1, justifyContent: 'center' }}>
-                {metrics.map((metric, idx) => {
-                    const statusColor = getColorForValue(metric.value, metric.name);
-                    return (
-                        <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <metric.icon size={16} color={metric.color} />
-                                    <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{metric.name}</span>
-                                </div>
-                                <span style={{ fontSize: '1.1rem', fontWeight: 800, color: statusColor }}>
-                                    {metric.value} <span style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', fontWeight: 500 }}>/ 10</span>
-                                </span>
-                            </div>
-                            <div style={{ height: '8px', width: '100%', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
-                                <motion.div
-                                    animate={{ width: `${(metric.value / 10) * 100}%` }}
-                                    transition={{ type: 'spring', stiffness: 50, damping: 15 }}
-                                    style={{ height: '100%', background: statusColor, borderRadius: '4px' }}
-                                />
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
+            <style>{`
+                @keyframes ppg-heartbeat {
+                    0%, 100% { transform: scale(1); }
+                    30%       { transform: scale(1.35); }
+                    60%       { transform: scale(0.88); }
+                }
+            `}</style>
         </div>
     );
 };

@@ -36,10 +36,16 @@ export interface Biomarkers {
     respRate?: number;
 }
 
+export interface WaveformSample {
+    t: number;   // device timestamp_ms
+    nir: number; // raw NIR ADC value
+}
+
 interface BLEContextType {
     status: BLEStatusType;
     device: BluetoothDevice | null;
     waveform: number[];
+    waveformSamples: WaveformSample[];
     biomarkers: Biomarkers | null;
     logs: string[];
     connect: () => Promise<void>;
@@ -60,6 +66,7 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const [device, setDevice] = useState<BluetoothDevice | null>(null);
     const [status, setStatus] = useState<BLEStatusType>(BLEStatus.DISCONNECTED);
     const [waveform, setWaveform] = useState<number[]>([]);
+    const [waveformSamples, setWaveformSamples] = useState<WaveformSample[]>([]);
     const [biomarkers, setBiomarkers] = useState<Biomarkers | null>(null);
     const [logs, setLogs] = useState<string[]>(["[SYSTEM] BLE INITIALIZED"]);
 
@@ -71,136 +78,98 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }, []);
 
     // ========================================================
-    // FFF2 — WAVEFORM (11-byte packed struct from firmware)
-    // Struct: [Uint32 timestamp_ms | Uint16 raw_nir | Uint16 raw_f8 | Uint16 raw_fz | Uint8 sqi]
+    // FFF2 — WAVEFORM (13-byte packed struct from firmware)
+    // Struct: [Uint32 timestamp_ms | Uint16 raw_nir | Uint16 raw_f8 | Uint16 raw_fz | Uint16 hr | Uint8 sqi]
     // We extract raw_nir at offset 4 as the primary PPG signal for charting.
     // ========================================================
     const handleWaveform = useCallback((event: any) => {
         const dv: DataView = event.target.value;
 
-        if (dv.byteLength === 11) {
-            // Spec-compliant 11-byte waveform packet
-            const nirSignal = dv.getUint16(4, true); // Primary PPG value
-            setWaveform(prev => {
-                const next = [...prev, nirSignal];
-                return next.slice(-300);
-            });
-        } else if (dv.byteLength >= 2) {
-            // Fallback: treat payload as raw Uint16 samples
-            const samples: number[] = [];
-            for (let i = 0; i < dv.byteLength - 1; i += 2) {
-                samples.push(dv.getUint16(i, true));
-            }
-            if (samples.length > 0) {
-                setWaveform(prev => [...prev, ...samples].slice(-300));
-            }
+        if (dv.byteLength === 13) {
+            const tMs = dv.getUint32(0, true);
+            const nirSignal = dv.getUint16(4, true);
+            setWaveform(prev => [...prev, nirSignal].slice(-300));
+            setWaveformSamples(prev => [...prev, { t: tMs, nir: nirSignal }].slice(-600));
+        } else {
+            addLog(`[WAVE] WARN: Invalid Waveform packet length (${dv.byteLength}b)`);
         }
-    }, []);
+    }, [addLog]);
 
     // ========================================================
-    // FFF3 — BIOMARKER RESULTS (21-byte packed struct)
-    // Guide: [mode(1)|hb(2)|spo2(2)|bili(2)|pi(2)|sqi(1)|sdnn(2)|rmssd(2)|bp_sys(2)|bp_dia(2)|resp(2)|eof(1)]
+    // FFF3 — BIOMARKER RESULTS
+    //
+    // Current firmware (23 bytes, no header):
+    //   [mode(1)|hb(2)|spo2(2)|bili(2)|pi(2)|sqi(1)|sdnn(2)|rmssd(2)|bp_sys(2)|bp_dia(2)|resp(2)|hr(2)|eof(1)]
+    //
+    // Legacy firmware (14 bytes, 0xB0 header prepended):
+    //   [0xB0(1)|mode(1)|hb(2)|spo2(2)|bili(2)|pi(2)|sqi(1)|hr_bpm_x10(2)|eof(1)]
+    //
     // EOF = 0xFE. Mode: 0x01=Normal, 0x03=Fast.
-    // Firmware may prepend a header byte (e.g. 0xB0) before the mode.
     // ========================================================
     const handleBiomarkers = useCallback((event: any) => {
         const dv: DataView = event.target.value;
         const len = dv.byteLength;
 
-        // Hex dump for diagnostics
-        const hexBytes: string[] = [];
-        for (let i = 0; i < len; i++) {
-            hexBytes.push(dv.getUint8(i).toString(16).padStart(2, '0').toUpperCase());
-        }
-        addLog(`[BIO] RAW (${len}b): ${hexBytes.join(' ')}`);
+        // Detect legacy 14-byte format by checking for the 0xB0 magic header byte.
+        const isLegacy = len === 14 && dv.getUint8(0) === 0xB0;
 
-        if (len < 2) {
-            addLog(`[BIO] WARN: Packet too short`);
+        if (len !== 23 && !isLegacy) {
+            addLog(`[BIO] WARN: Invalid Biomarker packet length (${len}b)`);
             return;
         }
 
-        // --- Find the mode byte ---
-        // The mode byte is 0x01 (Normal) or 0x03 (Fast).
-        // The firmware may prepend header bytes (like 0xB0).
-        // Strategy: scan the first few bytes for a valid mode.
-        let offset = -1;
-        let modeByte = 0;
-        for (let i = 0; i < Math.min(len, 4); i++) {
-            const b = dv.getUint8(i);
-            if (b === 0x01 || b === 0x03) {
-                offset = i;
-                modeByte = b;
-                break;
-            }
-        }
+        // For legacy packets the struct starts 1 byte in (after the 0xB0 header).
+        const offset = isLegacy ? 1 : 0;
+        const modeByte = dv.getUint8(offset);
 
-        // Verify EOF (last byte = 0xFE)
-        const lastByte = dv.getUint8(len - 1);
-        const hasEOF = lastByte === 0xFE;
-
-        if (offset === -1) {
-            addLog(`[BIO] WARN: No valid mode (0x01/0x03) found in first 4 bytes`);
-            // Last resort fallback: try to parse from byte 0 as if there's no mode prefix
-            if (hasEOF && len >= 12) {
-                addLog(`[BIO] FALLBACK: EOF detected, attempting positional decode...`);
-                const results: Biomarkers = {
-                    mode: 'normal',
-                    hb: dv.getUint16(1, true) / 100.0,
-                    spo2: dv.getUint16(3, true) / 100.0,
-                    bilirubin: dv.getUint16(5, true) / 100.0,
-                    pi: dv.getUint16(7, true) / 1000.0,
-                    sqi: dv.getUint8(9),
-                    stress: "LOW"
-                };
-                addLog(`[BIO] FALLBACK: Hb=${results.hb} SpO2=${results.spo2}% Bili=${results.bilirubin}`);
-                setBiomarkers(prev => ({ ...prev, ...results }));
-            }
+        // EOF marker check (byte 22 for current, byte 13 for legacy).
+        const eofByte = isLegacy ? dv.getUint8(13) : dv.getUint8(22);
+        if (eofByte !== 0xFE) {
+            addLog(`[BIO] WARN: Invalid EOF marker (0x${eofByte.toString(16)})`);
             return;
-        }
-
-        if (offset > 0) {
-            addLog(`[BIO] HEADER: Skipped ${offset} byte(s) to mode 0x0${modeByte}`);
         }
 
         let results: Biomarkers = {};
-        const dataLen = len - offset; // bytes available from mode byte onward
 
         if (modeByte === 0x01) {
             // ---- NORMAL MODE (40Hz) ----
-            // Need 10 bytes: mode(1)+hb(2)+spo2(2)+bili(2)+pi(2)+sqi(1)
-            if (dataLen >= 10) {
-                results = {
-                    mode: 'normal',
-                    hb: dv.getUint16(offset + 1, true) / 100.0,
-                    spo2: dv.getUint16(offset + 3, true) / 100.0,
-                    bilirubin: dv.getUint16(offset + 5, true) / 100.0,
-                    pi: dv.getUint16(offset + 7, true) / 1000.0,
-                    sqi: dv.getUint8(offset + 9),
-                    stress: "LOW"
-                };
-                addLog(`[BIO] NORMAL: Hb=${results.hb} | SpO2=${results.spo2}% | Bili=${results.bilirubin} | PI=${results.pi}% | SQI=${results.sqi}`);
-            } else {
-                addLog(`[BIO] WARN: Normal mode data too short (${dataLen} bytes)`);
-            }
-
+            // Layout from offset: hb(+1), spo2(+3), bili(+5), pi(+7), sqi(+9), hr(+20)
+            // Legacy has hr_bpm_x10 at (+10); current has integer BPM at (+20).
+            const hrBpm = isLegacy
+                ? dv.getUint16(offset + 10, true) / 10.0
+                : dv.getUint16(offset + 20, true);
+            results = {
+                mode: 'normal',
+                hb:        dv.getUint16(offset + 1, true) / 100.0,
+                spo2:      dv.getUint16(offset + 3, true) / 100.0,
+                bilirubin: dv.getUint16(offset + 5, true) / 100.0,
+                pi:        dv.getUint16(offset + 7, true) / 1000.0,
+                sqi:       dv.getUint8(offset + 9),
+                ...(hrBpm > 0 && { hr: hrBpm }),
+                stress: "LOW"
+            };
+            addLog(`[BIO] NORMAL: Hb=${results.hb} | SpO2=${results.spo2}% | Bili=${results.bilirubin} | PI=${results.pi}% | SQI=${results.sqi} | HR=${hrBpm}`);
         } else if (modeByte === 0x03) {
-            // ---- FAST MODE (200Hz) ----
-            // Full: need 20 bytes from mode: mode(1)+zeros(9)+sdnn(2)+rmssd(2)+bp_sys(2)+bp_dia(2)+resp(2)
-            if (dataLen >= 20) {
-                const rmssdVal = dv.getUint16(offset + 12, true);
-                results = {
-                    mode: 'fast',
-                    sdnn: dv.getUint16(offset + 10, true),
-                    rmssd: rmssdVal,
-                    bpSys: dv.getUint16(offset + 14, true),
-                    bpDia: dv.getUint16(offset + 16, true),
-                    respRate: dv.getUint16(offset + 18, true),
-                    stress: rmssdVal > 50 ? "HIGH" : "NORMAL"
-                };
-                addLog(`[BIO] FAST: SDNN=${results.sdnn}ms | RMSSD=${results.rmssd}ms | BP=${results.bpSys}/${results.bpDia} | RR=${results.respRate}`);
-            } else {
-                addLog(`[BIO] WARN: Fast mode data too short (${dataLen} bytes)`);
+            // ---- FAST MODE (200Hz) — only in 21-byte current format ----
+            if (isLegacy) {
+                addLog(`[BIO] WARN: Fast mode packet not supported in legacy format`);
+                return;
             }
+            const rmssdVal = dv.getUint16(offset + 12, true);
+            const hrFast   = dv.getUint16(offset + 20, true);
+            results = {
+                mode: 'fast',
+                sdnn:     dv.getUint16(offset + 10, true),
+                rmssd:    rmssdVal,
+                bpSys:    dv.getUint16(offset + 14, true),
+                bpDia:    dv.getUint16(offset + 16, true),
+                respRate: dv.getUint16(offset + 18, true),
+                ...(hrFast > 0 && { hr: hrFast }),
+                stress:   rmssdVal > 50 ? "HIGH" : "NORMAL"
+            };
+            addLog(`[BIO] FAST: HR=${hrFast} | SDNN=${results.sdnn}ms | RMSSD=${results.rmssd}ms | BP=${results.bpSys}/${results.bpDia} | RR=${results.respRate}`);
+        } else {
+            addLog(`[BIO] WARN: Unknown Mode byte (0x${modeByte.toString(16)}) — possible header misparse`);
         }
 
         if (Object.keys(results).length > 0) {
@@ -294,6 +263,7 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             status,
             device,
             waveform,
+            waveformSamples,
             biomarkers,
             logs,
             connect,
