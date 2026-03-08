@@ -9,13 +9,28 @@ import {
     Shield,
     Trash2,
     Download,
-    Layers
+    Layers,
+    Key,
+    Brain
 } from 'lucide-react';
+
+const OPENROUTER_KEY_STORAGE = 'spectru_openrouter_key';
+const OPENROUTER_MODEL_STORAGE = 'spectru_openrouter_model';
+
+export function getOpenRouterKey(): string {
+    return localStorage.getItem(OPENROUTER_KEY_STORAGE) || '';
+}
+export function getOpenRouterModel(): string {
+    return localStorage.getItem(OPENROUTER_MODEL_STORAGE) || 'x-ai/grok-4.1-fast';
+}
 
 const Settings: React.FC = () => {
     const [theme, setTheme] = useState('dark');
     const [smoothing, setSmoothing] = useState(true);
     const [units, setUnits] = useState('metric');
+    const [apiKey, setApiKey] = useState(() => getOpenRouterKey());
+    const [model, setModel] = useState(() => getOpenRouterModel());
+    const [keySaved, setKeySaved] = useState(false);
 
     const sections = [
         {
@@ -83,6 +98,52 @@ const Settings: React.FC = () => {
                 {
                     label: 'Data Logging', description: 'Automatic syncing to encrypted cloud storage.', component: (
                         <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>Cloud Sync (Active)</span>
+                    )
+                }
+            ]
+        },
+        {
+            title: 'AI Configuration',
+            icon: Brain,
+            settings: [
+                {
+                    label: 'OpenRouter API Key', description: 'Required for AI reports and chat. Get one at openrouter.ai/keys', component: (
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <input
+                                type="password"
+                                value={apiKey}
+                                onChange={(e) => { setApiKey(e.target.value); setKeySaved(false); }}
+                                placeholder="sk-or-..."
+                                style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'rgba(255,255,255,0.05)', color: 'var(--text-primary)', width: 260, outline: 'none', fontFamily: 'monospace', fontSize: '0.85rem' }}
+                            />
+                            <button
+                                onClick={() => { localStorage.setItem(OPENROUTER_KEY_STORAGE, apiKey); setKeySaved(true); setTimeout(() => setKeySaved(false), 2000); }}
+                                className="glass"
+                                style={{ padding: '8px 16px', borderRadius: '8px', border: keySaved ? '1px solid #10b981' : '1px solid var(--border-color)', color: keySaved ? '#10b981' : 'var(--primary-color)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}
+                            >
+                                <Key size={14} /> {keySaved ? 'Saved!' : 'Save'}
+                            </button>
+                        </div>
+                    )
+                },
+                {
+                    label: 'AI Model', description: 'OpenRouter model for reports and chat.', component: (
+                        <select
+                            value={model}
+                            onChange={(e) => { setModel(e.target.value); localStorage.setItem(OPENROUTER_MODEL_STORAGE, e.target.value); }}
+                            className="glass"
+                            style={{ padding: '8px', borderRadius: '8px', border: '1px solid var(--border-color)', color: 'white', outline: 'none', minWidth: 220 }}
+                        >
+                            <option value="google/gemini-2.0-flash-001">Gemini 2.0 Flash</option>
+                            <option value="google/gemini-2.5-pro-preview">Gemini 2.5 Pro</option>
+                            <option value="anthropic/claude-sonnet-4">Claude Sonnet 4</option>
+                            <option value="anthropic/claude-3.5-haiku">Claude 3.5 Haiku</option>
+                            <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
+                            <option value="openai/gpt-4o">GPT-4o</option>
+                            <option value="x-ai/grok-4.1-fast">Grok 4.1 Fast</option>
+                            <option value="deepseek/deepseek-r1">DeepSeek R1</option>
+                            <option value="meta-llama/llama-4-maverick">Llama 4 Maverick</option>
+                        </select>
                     )
                 }
             ]

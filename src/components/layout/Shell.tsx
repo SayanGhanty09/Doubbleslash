@@ -19,6 +19,7 @@ import SplineBackground from '../visuals/SplineBackground';
 
 import { BLEProvider, useBLE, BLEStatus } from '../../contexts/BLEContext';
 import { PatientStoreProvider } from '../../contexts/PatientStore';
+import { useAuth } from '../../contexts/AuthContext';
 
 // Mock Patient Context
 const PatientContext = createContext<{
@@ -78,6 +79,7 @@ const SidebarItem: React.FC<{ item: any, index: number }> = ({ item, index }) =>
 const ShellContent: React.FC = () => {
   const [activePatient, setActivePatient] = useState<string | null>("John Doe");
   const { status, connect, disconnect } = useBLE();
+  const { doctor, logout } = useAuth();
 
   const isConnected = status === BLEStatus.CONNECTED ||
     status === BLEStatus.IDLE ||
@@ -148,10 +150,10 @@ const ShellContent: React.FC = () => {
               <User size={20} />
             </div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: '0.85rem', fontWeight: 700 }}>Dr. Harrison</div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '1px' }}>Cardiologist</div>
+              <div style={{ fontSize: '0.85rem', fontWeight: 700 }}>{doctor?.name ?? 'Doctor'}</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '1px' }}>{doctor?.specialty ?? 'Physician'}</div>
             </div>
-            <LogOut size={18} style={{ color: 'var(--text-tertiary)', cursor: 'pointer' }} />
+            <LogOut size={18} style={{ color: 'var(--text-tertiary)', cursor: 'pointer' }} onClick={logout} />
           </motion.div>
         </nav>
 

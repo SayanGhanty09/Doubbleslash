@@ -4,10 +4,18 @@ import LiveRecording from './pages/LiveRecording';
 import Statistics from './pages/Statistics';
 import DeviceConsole from './pages/DeviceConsole';
 import Settings from './pages/Settings';
+import Login from './pages/Login';
 import { Routes, Route } from 'react-router-dom';
 import Shell from './components/layout/Shell';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 
-function App() {
+function AppRoutes() {
+  const { doctor } = useAuth();
+
+  if (!doctor) {
+    return <Login />;
+  }
+
   return (
     <Routes>
       <Route path="/" element={<Shell />}>
@@ -19,6 +27,14 @@ function App() {
         <Route path="settings" element={<Settings />} />
       </Route>
     </Routes>
+  );
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <AppRoutes />
+    </AuthProvider>
   );
 }
 

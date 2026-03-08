@@ -10,9 +10,8 @@ import {
   Brain,
   Loader2,
   FileText,
-  MessageSquare,
-  Send,
   Mail,
+  Send,
   Play,
   AlertTriangle,
   UserPlus,
@@ -23,6 +22,8 @@ import { usePatient } from "../components/layout/Shell";
 import { useBLE, BLEStatus } from "../contexts/BLEContext";
 import { usePatientStore } from "../contexts/PatientStore";
 import type { Patient } from "../contexts/PatientStore";
+import { getOpenRouterKey, getOpenRouterModel } from "./Settings";
+import AIAssistantChat from "../components/AIAssistantChat";
 
 const LiveRecording: React.FC = () => {
   const location = useLocation();
@@ -55,11 +56,34 @@ const LiveRecording: React.FC = () => {
       const bpDefined = Object.fromEntries(Object.entries(bestBP).filter(([, v]) => v !== undefined));
       const final = { ...bestNormal, ...bpDefined };
       saveRecording(selectedPatientId, final);
+
+      // Also store a standalone last-reading JSON for external use
+      const patient = patients.find(p => p.id === selectedPatientId);
+      const lastReading = {
+        deviceName: "Spectru",
+        patient: patient ? { id: patient.id, name: patient.name, age: patient.age, sex: patient.sex } : null,
+        timestamp: new Date().toISOString(),
+        biomarkers: {
+          spo2: final.spo2 ?? null,
+          heartRate: final.hr ?? null,
+          perfusionIndex: final.pi ?? null,
+          signalQuality: final.sqi != null ? Math.round(final.sqi * 100) : null,
+          sdnn: final.sdnn ?? null,
+          rmssd: final.rmssd ?? null,
+          hemoglobin: final.hb ?? null,
+          bilirubin: final.bilirubin ?? null,
+          systolicBP: final.bpSys ?? null,
+          diastolicBP: final.bpDia ?? null,
+          pulseRate: final.pulseRate ?? null,
+          respirationRate: final.respRate ?? null,
+        },
+      };
+      localStorage.setItem('spectru_last_reading', JSON.stringify(lastReading));
     }
     if (scanPhase === 'idle') {
       savedRef.current = false;
     }
-  }, [scanPhase, selectedPatientId, bestNormal, bestBP, saveRecording]);
+  }, [scanPhase, selectedPatientId, bestNormal, bestBP, saveRecording, patients]);
 
   // Auto-start from Dashboard navigation
   const autoStartedRef = useRef(false);
@@ -100,9 +124,6 @@ const LiveRecording: React.FC = () => {
   const [analysisResult, setAnalysisResult] = useState<any>(null);
   const [reportId, setReportId] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [chatInput, setChatInput] = useState("");
-  const [chatHistory, setChatHistory] = useState<any[]>([]);
-  const [isChatting, setIsChatting] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [emailForm, setEmailForm] = useState({ name: "", age: "", email: "" });
   const [isSendingEmail, setIsSendingEmail] = useState(false);
@@ -148,31 +169,97 @@ const LiveRecording: React.FC = () => {
     ];
   }, [displayData]);
 
-  // AI Report
+  // AI Report — via OpenRouter
   const generateAIReport = async () => {
     if (!displayData?.hr) return;
+    const apiKey = getOpenRouterKey();
+    if (!apiKey) { alert("Please set your OpenRouter API key in Settings."); return; }
+
     setIsAnalyzing(true);
-    const payload = {
-      heartRate: Math.round(displayData.hr || 0),
-      bloodPreasure: Math.round(displayData.bpSys || 120),
-      spo2Level: displayData.spo2 || 0,
-      sdnn: displayData.sdnn || 0,
-      rmssd: displayData.rmssd || 0,
-      heamoglobin: displayData.hb || 0,
-      bilirubin: displayData.bilirubin || 0,
-      deviceId: "WEB_CLIENT",
-      patientName: activePatient || "Guest",
-      patientAge: 30,
-      sendEmail: false
+    const patient = patients.find(p => p.id === selectedPatientId);
+    const readingJson = localStorage.getItem('spectru_last_reading');
+    const readingData = readingJson ? JSON.parse(readingJson) : {
+      patient: patient ? { name: patient.name, age: patient.age, sex: patient.sex } : null,
+      timestamp: new Date().toISOString(),
+      biomarkers: {
+        spo2: displayData.spo2 ?? null,
+        heartRate: displayData.hr ?? null,
+        perfusionIndex: displayData.pi ?? null,
+        signalQuality: displayData.sqi != null ? Math.round(displayData.sqi * 100) : null,
+        sdnn: displayData.sdnn ?? null,
+        rmssd: displayData.rmssd ?? null,
+        hemoglobin: displayData.hb ?? null,
+        bilirubin: displayData.bilirubin ?? null,
+        systolicBP: displayData.bpSys ?? null,
+        diastolicBP: displayData.bpDia ?? null,
+        pulseRate: displayData.pulseRate ?? null,
+        respirationRate: displayData.respRate ?? null,
+      }
     };
+
+    const systemPrompt = `You are a clinical screening AI assistant for Anebilin, a non-invasive optical biomarker screening device. You will receive a JSON object containing patient demographics and screening biomarker readings from the device.
+
+Your task is to provide a structured preliminary screening report. This is NOT a diagnosis — it is an AI-assisted screening interpretation to flag potential concerns for follow-up by a qualified physician.
+
+Analyze ALL provided biomarkers against standard clinical reference ranges:
+- SpO2: Normal 95-100%, concerning <94%, critical <90%
+- Heart Rate: Normal resting 60-100 bpm, bradycardia <60, tachycardia >100
+- Blood Pressure: Normal <120/80, elevated 120-129/<80, Stage 1 HTN 130-139/80-89, Stage 2 HTN ≥140/≥90, hypotension <90/60
+- HRV SDNN: Normal 50-100ms, low <50ms indicates stress/autonomic dysfunction
+- HRV RMSSD: Normal 20-50ms, reflects parasympathetic activity
+- Hemoglobin: Male 13.5-17.5 g/dL, Female 12.0-15.5 g/dL; <7 severe anemia
+- Bilirubin: Normal 0.1-1.2 mg/dL, elevated >1.2, clinical jaundice >2.5
+- Respiration Rate: Normal 12-20 brpm, tachypnea >20, bradypnea <12
+- Perfusion Index: Good >1%, acceptable 0.5-1%, poor <0.5%
+- Signal Quality: Reliable >70%, marginal 40-70%, unreliable <40%
+
+Respond in this exact JSON format:
+{
+  "healthScore": <number 1-10, where 10 is optimal health>,
+  "summary": "<2-3 sentence overall assessment>",
+  "findings": [
+    { "parameter": "<name>", "value": "<measured value with unit>", "status": "normal|borderline|abnormal", "interpretation": "<clinical significance>" }
+  ],
+  "recommendations": ["<actionable recommendation 1>", "<recommendation 2>", ...],
+  "warnings": ["<any critical flags that need immediate attention>"],
+  "disclaimer": "This is an AI-assisted screening interpretation, not a medical diagnosis. Consult a healthcare professional for clinical decisions."
+}
+
+Consider the patient's age and sex when interpreting values. If signal quality is low (<40%), note that readings may be unreliable. Be thorough but concise.`;
+
     try {
-      const res = await fetch("http://127.0.0.1:8000/analyze", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+          "HTTP-Referer": window.location.origin,
+          "X-Title": "Anebilin Spectru"
+        },
+        body: JSON.stringify({
+          model: getOpenRouterModel(),
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: `Here is the screening data JSON:\n\n${JSON.stringify(readingData, null, 2)}\n\nProvide the structured screening report.` }
+          ],
+          temperature: 0.3,
+          max_tokens: 2000
+        })
       });
       const data = await res.json();
-      if (data.status === "success") { setAnalysisResult(data.analysis); setReportId(data.report_id); }
-    } catch (e) { console.error(e); }
+      const raw = data.choices?.[0]?.message?.content ?? '';
+      // Extract JSON from possible markdown code fence
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        setAnalysisResult(parsed);
+      } else {
+        setAnalysisResult({ healthScore: 0, summary: raw, findings: [], recommendations: [], warnings: [], disclaimer: '' });
+      }
+    } catch (e: any) {
+      console.error(e);
+      alert("AI report failed: " + e.message);
+    }
     setIsAnalyzing(false);
   };
 
@@ -191,47 +278,6 @@ const LiveRecording: React.FC = () => {
       else alert("Failed: " + data.message);
     } catch (e) { console.error(e); alert("Error sending email."); }
     setIsSendingEmail(false);
-  };
-
-  // Chat — uses Grok API (xAI)
-  const GROK_API_KEY = "xai-placeholder-key"; // Replace with actual key
-  const sendMessage = async () => {
-    if (!chatInput.trim()) return;
-    const userMsg = { sender: "You", text: chatInput };
-    setChatHistory(prev => [...prev, userMsg]);
-    setChatInput(""); setIsChatting(true);
-
-    // Build context from biomarkers
-    const ctx = displayData ? Object.entries(displayData)
-      .filter(([, v]) => v !== undefined)
-      .map(([k, v]) => `${k}: ${typeof v === 'number' ? (v as number).toFixed(2) : v}`)
-      .join(', ') : 'No data';
-
-    try {
-      const res = await fetch("https://api.x.ai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${GROK_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: "grok-3-mini-fast",
-          messages: [
-            { role: "system", content: `You are a medical AI assistant. The patient's latest biomarker readings are: ${ctx}. Answer health questions based on this data. Be concise and clinically relevant.` },
-            ...chatHistory.map(m => ({ role: m.sender === "You" ? "user" : "assistant", content: m.text })),
-            { role: "user", content: userMsg.text }
-          ],
-          temperature: 0.7,
-          max_tokens: 500
-        })
-      });
-      const data = await res.json();
-      const reply = data.choices?.[0]?.message?.content ?? data.error?.message ?? "No response";
-      setChatHistory(prev => [...prev, { sender: "Grok AI", text: reply }]);
-    } catch (e: any) {
-      setChatHistory(prev => [...prev, { sender: "System", text: `Error: ${e.message}` }]);
-    }
-    setIsChatting(false);
   };
 
   return (
@@ -275,6 +321,30 @@ const LiveRecording: React.FC = () => {
           {isScanning ? "Measuring..." : scanPhase === 'done' ? "Measure Again" : "Measure Vitals"}
         </button>
 
+        {scanPhase === 'done' && (
+          <button
+            onClick={() => {
+              const raw = localStorage.getItem('spectru_last_reading');
+              if (!raw) return;
+              const blob = new Blob([raw], { type: 'application/json' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `spectru-reading-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+            className="btn-shimmer hover-lift-glow"
+            style={{
+              padding: "14px 24px", border: "none", borderRadius: "12px",
+              cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 10,
+              fontSize: "1rem", fontWeight: 600, color: "var(--text-primary)"
+            }}
+          >
+            <FileText size={18} /> Export JSON
+          </button>
+        )}
+
         {fingerGuidance && (
           <div style={{
             display: "flex", alignItems: "center", gap: 10, padding: "12px 20px",
@@ -289,7 +359,7 @@ const LiveRecording: React.FC = () => {
         {scanPhase === 'normal' && livePi !== undefined && (
           <div style={{ display: "flex", gap: 16 }}>
             <span style={{ fontSize: "0.9rem", color: "var(--text-secondary)" }}>PI: <strong style={{ color: "var(--text-primary)" }}>{livePi.toFixed(2)}%</strong></span>
-            <span style={{ fontSize: "0.9rem", color: "var(--text-secondary)" }}>SQI: <strong style={{ color: "var(--text-primary)" }}>{(liveSqi ?? 0).toFixed(2)}</strong></span>
+            <span style={{ fontSize: "0.9rem", color: "var(--text-secondary)" }}>SQI: <strong style={{ color: "var(--text-primary)" }}>{((liveSqi ?? 0) * 100).toFixed(0)}%</strong></span>
           </div>
         )}
 
@@ -356,71 +426,54 @@ const LiveRecording: React.FC = () => {
           <div style={{ display: "grid", gap: 20 }}>
             <div style={{ background: "rgba(255,255,255,0.03)", padding: 20, borderRadius: 12, border: "1px solid var(--border-color)" }}>
               <strong style={{ color: "var(--primary-color)", fontSize: "1.1rem" }}>Summary:</strong> 
-              <p style={{ margin: "10px 0 0 0", color: "var(--text-primary)", lineHeight: 1.6 }}>{analysisResult.general}</p>
+              <p style={{ margin: "10px 0 0 0", color: "var(--text-primary)", lineHeight: 1.6 }}>{analysisResult.summary}</p>
             </div>
-            <div style={{ background: "rgba(255,255,255,0.03)", padding: 20, borderRadius: 12, border: "1px solid var(--border-color)" }}>
-              <strong style={{ color: "var(--primary-color)", fontSize: "1.1rem" }}>Detailed Report:</strong> 
-              <p style={{ margin: "10px 0 0 0", color: "var(--text-primary)", lineHeight: 1.6 }}>{analysisResult.report}</p>
-            </div>
-            <div style={{ background: "rgba(16, 185, 129, 0.1)", padding: 20, borderRadius: 12, border: "1px solid rgba(16, 185, 129, 0.2)" }}>
-              <strong style={{ color: "var(--success-color)", fontSize: "1.1rem" }}>Recommended Action:</strong> 
-              <p style={{ margin: "10px 0 0 0", color: "var(--text-primary)", lineHeight: 1.6 }}>{analysisResult.whatnow}</p>
-            </div>
+
+            {analysisResult.findings?.length > 0 && (
+              <div style={{ background: "rgba(255,255,255,0.03)", padding: 20, borderRadius: 12, border: "1px solid var(--border-color)" }}>
+                <strong style={{ color: "var(--primary-color)", fontSize: "1.1rem" }}>Findings:</strong>
+                <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+                  {analysisResult.findings.map((f: any, i: number) => (
+                    <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "10px 14px", borderRadius: 8, background: f.status === 'abnormal' ? 'rgba(239,68,68,0.08)' : f.status === 'borderline' ? 'rgba(245,158,11,0.08)' : 'rgba(16,185,129,0.08)', border: `1px solid ${f.status === 'abnormal' ? 'rgba(239,68,68,0.2)' : f.status === 'borderline' ? 'rgba(245,158,11,0.2)' : 'rgba(16,185,129,0.2)'}` }}>
+                      <span style={{ fontWeight: 700, minWidth: 100, color: f.status === 'abnormal' ? '#ef4444' : f.status === 'borderline' ? '#f59e0b' : '#10b981' }}>{f.parameter}</span>
+                      <span style={{ fontFamily: "monospace", minWidth: 80, color: "var(--text-primary)" }}>{f.value}</span>
+                      <span style={{ color: "var(--text-secondary)", flex: 1 }}>{f.interpretation}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {analysisResult.recommendations?.length > 0 && (
+              <div style={{ background: "rgba(16, 185, 129, 0.08)", padding: 20, borderRadius: 12, border: "1px solid rgba(16, 185, 129, 0.2)" }}>
+                <strong style={{ color: "var(--success-color)", fontSize: "1.1rem" }}>Recommendations:</strong>
+                <ul style={{ margin: "10px 0 0 0", paddingLeft: 20, color: "var(--text-primary)", lineHeight: 1.8 }}>
+                  {analysisResult.recommendations.map((r: string, i: number) => <li key={i}>{r}</li>)}
+                </ul>
+              </div>
+            )}
+
+            {analysisResult.warnings?.length > 0 && (
+              <div style={{ background: "rgba(239, 68, 68, 0.08)", padding: 20, borderRadius: 12, border: "1px solid rgba(239, 68, 68, 0.2)" }}>
+                <strong style={{ color: "#ef4444", fontSize: "1.1rem" }}>&#9888; Warnings:</strong>
+                <ul style={{ margin: "10px 0 0 0", paddingLeft: 20, color: "#ef4444", lineHeight: 1.8 }}>
+                  {analysisResult.warnings.map((w: string, i: number) => <li key={i}>{w}</li>)}
+                </ul>
+              </div>
+            )}
+
+            {analysisResult.disclaimer && (
+              <p style={{ color: "var(--text-tertiary)", fontSize: "0.85rem", fontStyle: "italic", margin: "10px 0 0 0" }}>{analysisResult.disclaimer}</p>
+            )}
           </div>
         </div>
       )}
 
-      {/* CHAT SECTION — Grok AI */}
-      <div className="glass card-glow" style={{ marginTop: 40, padding: 30, borderRadius: 16 }}>
-        <h3 className="glowing-heading" style={{ marginTop: 0, display: "flex", alignItems: "center", gap: 12, fontSize: "1.5rem" }}>
-          <MessageSquare size={24} color="var(--primary-color)" /> Ask Grok AI
-        </h3>
-        <p style={{ color: "var(--text-secondary)", fontSize: "0.95rem", marginBottom: 20 }}>Chat about your vitals and health data with Grok AI.</p>
-
-        <div className="scroll-hide" style={{ maxHeight: 350, overflowY: "auto", padding: 15, display: "flex", flexDirection: "column", gap: 12, background: "rgba(0,0,0,0.2)", border: "1px solid var(--border-color)", borderRadius: 12, marginBottom: 20, minHeight: 150 }}>
-          {chatHistory.length === 0 && <p style={{ color: "var(--text-tertiary)", textAlign: "center", marginTop: 40 }}>No messages yet — ask about your readings...</p>}
-          
-          {chatHistory.map((msg, i) => {
-            const isUser = msg.sender === "You";
-            return (
-              <div key={i} style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start" }}>
-                <div style={{ 
-                  maxWidth: "80%", 
-                  padding: "12px 18px", 
-                  borderRadius: 16, 
-                  backgroundColor: isUser ? "rgba(0, 210, 255, 0.15)" : "rgba(255, 255, 255, 0.05)", 
-                  color: "var(--text-primary)",
-                  border: `1px solid ${isUser ? 'rgba(0, 210, 255, 0.3)' : 'var(--border-color)'}`,
-                  borderBottomRightRadius: isUser ? 4 : 16,
-                  borderBottomLeftRadius: isUser ? 16 : 4
-                }}>
-                  <b style={{ display: "block", fontSize: "0.8rem", color: isUser ? "var(--primary-color)" : "var(--text-secondary)", opacity: 0.9, marginBottom: 6 }}>{msg.sender}</b>
-                  <div style={{ lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{msg.text}</div>
-                </div>
-              </div>
-            );
-          })}
-          {isChatting && <div style={{ color: "var(--text-tertiary)", fontStyle: "italic", marginLeft: 15 }}>Grok is thinking...</div>}
-        </div>
-
-        <div style={{ display: "flex", gap: 12 }}>
-          <input
-            value={chatInput}
-            onChange={(e) => setChatInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-            placeholder="E.g. What does my SDNN score mean?"
-            style={{ flex: 1, padding: "14px 20px", borderRadius: 12, border: "1px solid var(--border-color)", outline: "none", background: "rgba(0,0,0,0.3)", color: "var(--text-primary)", fontSize: "1rem" }}
-          />
-          <button 
-            onClick={sendMessage} 
-            disabled={isChatting}
-            className="btn-shimmer hover-lift-glow"
-            style={{ padding: "0 24px", color: "var(--text-primary)", border: "1px solid var(--secondary-color)", borderRadius: 12, cursor: isChatting ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 10, fontWeight: "500", fontSize: "1rem", background: "transparent" }}
-          >
-            <Send size={18} /> Send
-          </button>
-        </div>
-      </div>
+      {/* CHAT SECTION — AI Assistant (reusable component) */}
+      <AIAssistantChat
+        biomarkerData={displayData}
+        patient={selectedPatientId ? (() => { const p = patients.find(pt => pt.id === selectedPatientId); return p ? { name: p.name, age: p.age, sex: p.sex } : null; })() : null}
+      />
 
       {/* EMAIL POPUP MODAL */}
       {isModalOpen && (

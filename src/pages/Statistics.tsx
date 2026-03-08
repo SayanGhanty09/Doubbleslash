@@ -24,6 +24,7 @@ import {
     CartesianGrid,
     Tooltip
 } from 'recharts';
+import AIAssistantChat from '../components/AIAssistantChat';
 
 const Statistics: React.FC = () => {
     const { biomarkers } = useBLE();
@@ -93,7 +94,7 @@ const Statistics: React.FC = () => {
         { label: 'SDNN', value: displayBio?.sdnn ? displayBio.sdnn.toFixed(2) : '--', unit: 'ms', pct: Math.min(100, ((displayBio?.sdnn ?? 0) / 100) * 100) },
         { label: 'RMSSD', value: displayBio?.rmssd ? displayBio.rmssd.toFixed(2) : '--', unit: 'ms', pct: Math.min(100, ((displayBio?.rmssd ?? 0) / 80) * 100) },
         { label: 'PI (Perfusion Index)', value: displayBio?.pi ? displayBio.pi.toFixed(2) : '--', unit: '%', pct: Math.min(100, ((displayBio?.pi ?? 0) / 5) * 100) },
-        { label: 'SQI (Signal Quality)', value: displayBio?.sqi !== undefined ? displayBio.sqi.toFixed(2) : '--', unit: '/100', pct: displayBio?.sqi ?? 0 },
+        { label: 'SQI (Signal Quality)', value: displayBio?.sqi !== undefined ? (displayBio.sqi * 100).toFixed(0) : '--', unit: '/100', pct: (displayBio?.sqi ?? 0) * 100 },
         { label: 'Hemoglobin (Hb)', value: displayBio?.hb ? displayBio.hb.toFixed(2) : '--', unit: 'g/dL', pct: Math.min(100, Math.max(0, ((displayBio?.hb ?? 0) - 8) / 10 * 100)) },
     ];
 
@@ -117,7 +118,7 @@ const Statistics: React.FC = () => {
             ["Bilirubin", displayBio?.bilirubin ? displayBio.bilirubin.toFixed(2) : "--", "mg/dL"],
             ["Blood Pressure", displayBio?.bpSys ? `${displayBio.bpSys.toFixed(2)}/${displayBio.bpDia?.toFixed(2)}` : "--", "mmHg"],
             ["PI", displayBio?.pi ? displayBio.pi.toFixed(2) : "--", "%"],
-            ["SQI", displayBio?.sqi !== undefined ? displayBio.sqi.toFixed(2) : "--", "/100"],
+            ["SQI", displayBio?.sqi !== undefined ? (displayBio.sqi * 100).toFixed(0) : "--", "/100"],
             ["SDNN", displayBio?.sdnn ? displayBio.sdnn.toFixed(2) : "--", "ms"],
             ["RMSSD", displayBio?.rmssd ? displayBio.rmssd.toFixed(2) : "--", "ms"],
         ];
@@ -301,6 +302,12 @@ const Statistics: React.FC = () => {
                                         </div>
                                     </>
                                 )}
+
+                                {/* AI Assistant Chat — uses selected recording data */}
+                                <AIAssistantChat
+                                    biomarkerData={selectedData}
+                                    patient={selectedPatient ? { name: selectedPatient.name, age: selectedPatient.age, sex: selectedPatient.sex } : null}
+                                />
                             </>
                         ) : (
                             <div className="glass" style={{ padding: 60, borderRadius: 20, textAlign: 'center', color: 'var(--text-tertiary)' }}>

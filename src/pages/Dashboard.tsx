@@ -19,12 +19,14 @@ import { useBLE, BLEStatus } from '../contexts/BLEContext';
 import { usePatientStore } from '../contexts/PatientStore';
 import type { Patient } from '../contexts/PatientStore';
 import { usePatient } from '../components/layout/Shell';
+import { useAuth } from '../contexts/AuthContext';
 
 const Dashboard: React.FC = () => {
     const navigate = useNavigate();
     const { status, startFullScan } = useBLE();
     const { patients, recordings, addPatient } = usePatientStore();
     const { setActivePatient } = usePatient();
+    const { doctor } = useAuth();
 
     const isConnected = status === BLEStatus.CONNECTED ||
         status === BLEStatus.IDLE ||
@@ -75,14 +77,13 @@ const Dashboard: React.FC = () => {
             {/* Welcome Section */}
             <section style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
                 <div>
-                    <h1 className="glowing-heading" style={{ fontSize: '1.8rem', marginBottom: '40px', fontWeight: 700 }}>Welcome back, Dr. Harrison</h1>
+                    <h1 className="glowing-heading" style={{ fontSize: '1.8rem', marginBottom: '40px', fontWeight: 700 }}>Welcome back, {doctor?.name ?? 'Doctor'}</h1>
                     <p style={{ color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
                         System Status: <span className="status-dot"></span> <span style={{ color: 'var(--success-color)', fontWeight: 600 }}>Normal</span>. 1 Device Connected.
                     </p>
                 </div>
                 <div style={{ textAlign: 'right', fontSize: '0.875rem', color: 'var(--text-tertiary)' }}>
                     <div>Monday, May 20, 2024</div>
-                    <div className="text-neon-pulse" style={{ fontWeight: 600, marginTop: '4px' }}>IEEE Medical Center</div>
                 </div>
             </section>
 
