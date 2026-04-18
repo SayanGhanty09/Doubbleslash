@@ -7,15 +7,11 @@ import {
     ArrowUpCircle,
     CheckCircle2,
     AlertCircle,
-    Battery,
-    Wifi,
-    Cpu,
-    Shield,
     UserPlus,
     Users,
     X
 } from 'lucide-react';
-import { useBLE, BLEStatus } from '../contexts/BLEContext';
+import { useBLE } from '../contexts/BLEContext';
 import { usePatientStore } from '../contexts/PatientStore';
 import type { Patient } from '../contexts/PatientStore';
 import { usePatient } from '../components/layout/Shell';
@@ -23,23 +19,20 @@ import { useAuth } from '../contexts/AuthContext';
 
 const Dashboard: React.FC = () => {
     const navigate = useNavigate();
-    const { status, startFullScan } = useBLE();
-    const { patients, recordings, addPatient } = usePatientStore();
+    useBLE();
+    const { patients, recordings, addPatient, error } = usePatientStore();
     const { setActivePatient } = usePatient();
     const { doctor } = useAuth();
-
-    const isConnected = status === BLEStatus.CONNECTED ||
-        status === BLEStatus.IDLE ||
-        status === BLEStatus.SCANNING ||
-        status === BLEStatus.SCANNING_BP;
 
     // Patient picker state
     const [showPicker, setShowPicker] = useState(false);
     const [newName, setNewName] = useState('');
     const [newAge, setNewAge] = useState('');
     const [newSex, setNewSex] = useState<'Male' | 'Female' | 'Other'>('Male');
+    const [pickerError, setPickerError] = useState<string | null>(null);
 
     const handleStartRecording = () => {
+        setPickerError(null);
         setShowPicker(true);
     };
 
@@ -50,10 +43,15 @@ const Dashboard: React.FC = () => {
         navigate('/live', { state: { autoStartPatientId: patient.id, autoStartPatientName: patient.name } });
     };
 
-    const handleAddAndLaunch = () => {
+    const handleAddAndLaunch = async () => {
         if (!newName.trim()) return;
-        const p = addPatient({ name: newName.trim(), age: parseInt(newAge) || 0, sex: newSex });
+        const p = await addPatient({ name: newName.trim(), age: parseInt(newAge) || 0, sex: newSex });
+        if (!p) {
+            setPickerError(error || 'Could not create patient. Please try again.');
+            return;
+        }
         setNewName(''); setNewAge(''); setNewSex('Male');
+        setPickerError(null);
         launchWithPatient(p);
     };
 
@@ -87,9 +85,7 @@ const Dashboard: React.FC = () => {
                 </div>
             </section>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px' }}>
-                {/* Left Column */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                     {/* Quick Actions */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
                         {[
@@ -178,68 +174,6 @@ const Dashboard: React.FC = () => {
                     </div>
                 </div>
 
-                {/* Right Column - Device Status */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                    <div className="glass border-spin-premium hover-lift-glow" style={{ padding: '24px', borderRadius: '24px', position: 'relative', overflow: 'hidden' }}>
-                        <div style={{ position: 'absolute', top: 0, right: 0, padding: '16px' }}>
-                            <Wifi size={18} color="var(--success-color)" />
-                        </div>
-
-                        <h3 style={{ marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <Cpu size={20} color="var(--primary-color)" /> Hardware Status
-                        </h3>
-
-                        <div style={{
-                            height: '180px',
-                            background: 'rgba(0,210,255,0.02)',
-                            borderRadius: '20px',
-                            border: '1px dashed var(--border-color)',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '12px',
-                            marginBottom: '24px'
-                        }}>
-                            <Shield size={48} color="var(--primary-color)" className="animate-float" style={{ opacity: 0.8, filter: 'drop-shadow(0 0 10px rgba(0, 210, 255, 0.5))' }} />
-                            <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', textAlign: 'center' }}>
-                                Secure Connection Active<br />
-                                <span style={{ color: 'var(--primary-color)' }}>ESP32-MEDICAL-V1</span>
-                            </div>
-                        </div>
-
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>MAC Address</span>
-                                <span style={{ fontWeight: 500, fontFamily: 'Roboto Mono', fontSize: '0.85rem' }}>A1:B2:C3:D4:E5:F6</span>
-                            </div>
-
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                <Battery size={20} color="var(--success-color)" />
-                                <div style={{ flex: 1, height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px' }}>
-                                    <div style={{ width: '85%', height: '100%', background: 'var(--success-color)', borderRadius: '3px' }}></div>
-                                </div>
-                                <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>85%</span>
-                            </div>
-
-                            <button style={{
-                                width: '100%',
-                                padding: '14px',
-                                borderRadius: '12px',
-                                background: 'rgba(255,255,255,0.03)',
-                                color: 'var(--text-primary)',
-                                border: '1px solid var(--border-color)',
-                                fontWeight: 600,
-                                cursor: 'pointer',
-                                marginTop: '8px'
-                            }}>
-                                Disconnect Device
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
             {/* Patient Picker Popup */}
             {showPicker && (
                 <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}
@@ -290,6 +224,19 @@ const Dashboard: React.FC = () => {
                                     style={{ width: '100%', padding: '12px', borderRadius: 10, background: 'var(--primary-color)', color: 'black', border: 'none', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                                     <Play size={16} /> Add & Start Recording
                                 </button>
+                                {pickerError && (
+                                    <div style={{
+                                        marginTop: 8,
+                                        padding: '10px 12px',
+                                        borderRadius: 8,
+                                        border: '1px solid rgba(239,68,68,0.35)',
+                                        background: 'rgba(239,68,68,0.1)',
+                                        color: '#fca5a5',
+                                        fontSize: '0.85rem'
+                                    }}>
+                                        {pickerError}
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>

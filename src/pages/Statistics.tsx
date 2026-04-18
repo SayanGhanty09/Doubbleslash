@@ -2,13 +2,13 @@ import React, { useState, useMemo } from 'react';
 import { useBLE } from '../contexts/BLEContext';
 import { usePatientStore } from '../contexts/PatientStore';
 import type { RecordingEntry, Patient } from '../contexts/PatientStore';
+import { getBPCaptureEnabled } from '../utils/preferences';
 import { motion } from 'framer-motion';
 import {
     FileDown,
     Calendar,
     Activity,
     Info,
-    ChevronDown,
     Download,
     User,
     Trash2,
@@ -27,6 +27,7 @@ import {
 import AIAssistantChat from '../components/AIAssistantChat';
 
 const Statistics: React.FC = () => {
+    const bpCaptureEnabled = getBPCaptureEnabled();
     const { biomarkers } = useBLE();
     const { patients, recordings, deleteRecording } = usePatientStore();
 
@@ -42,7 +43,7 @@ const Statistics: React.FC = () => {
         for (const r of recordings) {
             const entry = m.get(r.patientId);
             if (entry) entry.records.push(r);
-            else m.set(r.patientId, { patient: { id: r.patientId, name: r.patientName, age: 0, sex: 'Other', createdAt: '' }, records: [r] });
+            else m.set(r.patientId, { patient: { id: r.patientId, userId: '', name: r.patientName, age: 0, sex: 'Other', createdAt: '' }, records: [r] });
         }
         return m;
     }, [patients, recordings]);
@@ -86,8 +87,10 @@ const Statistics: React.FC = () => {
         { label: 'SpO2', value: displayBio?.spo2 ? displayBio.spo2.toFixed(2) : '--', sub: '%' },
         { label: 'Hemoglobin (Hb)', value: displayBio?.hb ? displayBio.hb.toFixed(2) : '--', sub: 'g/dL' },
         { label: 'Bilirubin', value: displayBio?.bilirubin ? displayBio.bilirubin.toFixed(2) : '--', sub: 'mg/dL' },
-        { label: 'Blood Pressure', value: displayBio?.bpSys ? `${displayBio.bpSys.toFixed(2)}/${displayBio.bpDia?.toFixed(2)}` : '--', sub: 'mmHg' },
-        { label: 'Resp. Rate', value: displayBio?.respRate ? displayBio.respRate.toFixed(2) : '--', sub: 'br/min' },
+        ...(bpCaptureEnabled ? [
+            { label: 'Blood Pressure', value: displayBio?.bpSys ? `${displayBio.bpSys.toFixed(2)}/${displayBio.bpDia?.toFixed(2)}` : '--', sub: 'mmHg' },
+            { label: 'Resp. Rate', value: displayBio?.respRate ? displayBio.respRate.toFixed(2) : '--', sub: 'br/min' },
+        ] : []),
     ];
 
     const hrvMetrics = [
@@ -324,7 +327,7 @@ const Statistics: React.FC = () => {
             <div className="prescription-only" style={{ fontFamily: 'Arial, sans-serif' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '2px solid black', paddingBottom: '20px', marginBottom: '30px' }}>
                     <div>
-                        <h1 style={{ margin: 0, fontSize: '24pt' }}>IEEE JU MEDICAL CENTER</h1>
+                        <h1 style={{ margin: 0, fontSize: '24pt' }}>Anebilin MEDICAL CENTER</h1>
                         <p style={{ margin: '5px 0' }}>Electronic Digital Health Record</p>
                         <p style={{ margin: 0, fontSize: '10pt', color: '#444' }}>Session Data & Vital Reports</p>
                     </div>
@@ -371,7 +374,7 @@ const Statistics: React.FC = () => {
                         NOTE: This data is only for screening purposes.
                     </p>
                     <p style={{ fontSize: '9pt', color: '#888', marginTop: '10px' }}>
-                        IEEE JU Health Integration System
+                        Anebilin Health Integration System
                     </p>
                 </div>
             </div>

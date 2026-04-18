@@ -13,24 +13,31 @@ import {
     Key,
     Brain
 } from 'lucide-react';
+import { getBPCaptureEnabled, setBPCaptureEnabled } from '../utils/preferences';
+import {
+    AI_MODE_OPTIONS,
+    getAIModeLabel,
+    getOpenRouterKey,
+    getOpenRouterModel,
+    setOpenRouterKey,
+    setOpenRouterModel,
+    type AIFeatureMode,
+} from '../utils/aiPreferences';
 
-const OPENROUTER_KEY_STORAGE = 'spectru_openrouter_key';
-const OPENROUTER_MODEL_STORAGE = 'spectru_openrouter_model';
-
-export function getOpenRouterKey(): string {
-    return localStorage.getItem(OPENROUTER_KEY_STORAGE) || '';
-}
-export function getOpenRouterModel(): string {
-    return localStorage.getItem(OPENROUTER_MODEL_STORAGE) || 'x-ai/grok-4.1-fast';
-}
+const AI_FEATURE_MODES: AIFeatureMode[] = ['regionalAnalytics', 'assistantChat'];
 
 const Settings: React.FC = () => {
     const [theme, setTheme] = useState('dark');
     const [smoothing, setSmoothing] = useState(true);
     const [units, setUnits] = useState('metric');
     const [apiKey, setApiKey] = useState(() => getOpenRouterKey());
-    const [model, setModel] = useState(() => getOpenRouterModel());
+    const [models, setModels] = useState<Record<AIFeatureMode, string>>(() => ({
+        regionalAnalytics: getOpenRouterModel('regionalAnalytics'),
+        assistantChat: getOpenRouterModel('assistantChat'),
+        liveRecording: getOpenRouterModel('liveRecording'),
+    }));
     const [keySaved, setKeySaved] = useState(false);
+    const [bpCaptureEnabled, setBpCaptureEnabled] = useState(() => getBPCaptureEnabled());
 
     const sections = [
         {
@@ -83,6 +90,37 @@ const Settings: React.FC = () => {
                             <option value="imperial">Imperial (lb, in)</option>
                         </select>
                     )
+                },
+                {
+                    label: 'BP Capture', description: 'When OFF, scan stops after normal biomarkers and BP fields are hidden.', component: (
+                        <div
+                            onClick={() => {
+                                const next = !bpCaptureEnabled;
+                                setBpCaptureEnabled(next);
+                                setBPCaptureEnabled(next);
+                            }}
+                            style={{
+                                width: 48,
+                                height: 24,
+                                borderRadius: 12,
+                                background: bpCaptureEnabled ? 'var(--primary-color)' : 'rgba(255,255,255,0.1)',
+                                position: 'relative',
+                                cursor: 'pointer',
+                                transition: '0.3s'
+                            }}
+                        >
+                            <div style={{
+                                width: 18,
+                                height: 18,
+                                borderRadius: '50%',
+                                background: bpCaptureEnabled ? 'black' : 'white',
+                                position: 'absolute',
+                                top: 3,
+                                left: bpCaptureEnabled ? 27 : 3,
+                                transition: '0.3s'
+                            }}></div>
+                        </div>
+                    )
                 }
             ]
         },
@@ -117,7 +155,7 @@ const Settings: React.FC = () => {
                                 style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'rgba(255,255,255,0.05)', color: 'var(--text-primary)', width: 260, outline: 'none', fontFamily: 'monospace', fontSize: '0.85rem' }}
                             />
                             <button
-                                onClick={() => { localStorage.setItem(OPENROUTER_KEY_STORAGE, apiKey); setKeySaved(true); setTimeout(() => setKeySaved(false), 2000); }}
+                                onClick={() => { setOpenRouterKey(apiKey); setKeySaved(true); setTimeout(() => setKeySaved(false), 2000); }}
                                 className="glass"
                                 style={{ padding: '8px 16px', borderRadius: '8px', border: keySaved ? '1px solid #10b981' : '1px solid var(--border-color)', color: keySaved ? '#10b981' : 'var(--primary-color)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}
                             >
@@ -126,26 +164,28 @@ const Settings: React.FC = () => {
                         </div>
                     )
                 },
-                {
-                    label: 'AI Model', description: 'OpenRouter model for reports and chat.', component: (
+                ...AI_FEATURE_MODES.map((mode) => ({
+                    label: `${getAIModeLabel(mode)} AI Model`,
+                    description: 'Select which OpenRouter model this screen should use.',
+                    component: (
                         <select
-                            value={model}
-                            onChange={(e) => { setModel(e.target.value); localStorage.setItem(OPENROUTER_MODEL_STORAGE, e.target.value); }}
+                            value={models[mode]}
+                            onChange={(e) => {
+                                const nextModel = e.target.value;
+                                setModels((prev) => ({ ...prev, [mode]: nextModel }));
+                                setOpenRouterModel(mode, nextModel);
+                            }}
                             className="glass"
                             style={{ padding: '8px', borderRadius: '8px', border: '1px solid var(--border-color)', color: 'white', outline: 'none', minWidth: 220 }}
                         >
-                            <option value="google/gemini-2.0-flash-001">Gemini 2.0 Flash</option>
-                            <option value="google/gemini-2.5-pro-preview">Gemini 2.5 Pro</option>
-                            <option value="anthropic/claude-sonnet-4">Claude Sonnet 4</option>
-                            <option value="anthropic/claude-3.5-haiku">Claude 3.5 Haiku</option>
-                            <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
-                            <option value="openai/gpt-4o">GPT-4o</option>
-                            <option value="x-ai/grok-4.1-fast">Grok 4.1 Fast</option>
-                            <option value="deepseek/deepseek-r1">DeepSeek R1</option>
-                            <option value="meta-llama/llama-4-maverick">Llama 4 Maverick</option>
+                            {AI_MODE_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                    {option.label}
+                                </option>
+                            ))}
                         </select>
-                    )
-                }
+                    ),
+                }))
             ]
         },
         {

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { MessageSquare, Send } from "lucide-react";
-import { getOpenRouterKey, getOpenRouterModel } from "../pages/Settings";
+import { getOpenRouterKey, getOpenRouterModel } from "../utils/aiPreferences";
 
 interface AIAssistantChatProps {
   /** Biomarker data object to use as AI context */
@@ -60,7 +60,23 @@ const AIAssistantChat: React.FC<AIAssistantChatProps> = ({ biomarkerData, patien
           .join(", ")
       : "No data";
 
-    const patientCtx = patient ? `Patient: ${patient.name}, Age: ${patient.age}, Sex: ${patient.sex}. ` : "";
+    // SECURITY: Only include non-identifiable demographic info (NO PATIENT NAME)
+    const demographicCtx = patient ? `Patient Demographics: Age ${patient.age}, Sex ${patient.sex}. ` : "";
+
+    // SAFETY: Validate that user question is medical-related before sending to AI
+    const isMedicalQuestion = (text: string): boolean => {
+      const medicalKeywords = ['symptom', 'pain', 'headache', 'fever', 'blood', 'heart', 'pressure', 'glucose', 'cholesterol', 'hemoglobin', 'oxygen', 'fatigue', 'tired', 'dizzy', 'nausea', 'breathing', 'pulse', 'temperature', 'biomarker', 'health', 'medical', 'doctor', 'treatment', 'medication', 'disease', 'condition', 'diagnosis', 'wellness', 'exercise', 'diet', 'vitamin', 'supplement', 'sleep', 'stress', 'allergy', 'infection', 'inflammation', 'recover', 'cancer', 'diabetes', 'blood pressure', 'cholesterol'];
+      const lowerText = text.toLowerCase();
+      return medicalKeywords.some(keyword => lowerText.includes(keyword));
+    };
+
+    // Reject non-medical questions upfront
+    if (!isMedicalQuestion(chatInput)) {
+      const nonMedicalMsg = { sender: "Assistant", text: "I'm specifically designed to help with health and biomarker-related questions. Please ask me about your medical readings, symptoms, or health concerns. I cannot help with general knowledge questions like geography or history." };
+      setChatHistory(prev => [...prev, nonMedicalMsg]);
+      setIsChatting(false);
+      return;
+    }
 
     try {
       const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -72,13 +88,20 @@ const AIAssistantChat: React.FC<AIAssistantChatProps> = ({ biomarkerData, patien
           "X-Title": "Anebilin Spectru",
         },
         body: JSON.stringify({
-          model: getOpenRouterModel(),
+          model: getOpenRouterModel('assistantChat'),
           messages: [
             {
               role: "system",
-              content: `You are a warm, friendly, and empathetic medical AI assistant for the Anebilin non-invasive screening device. ${patientCtx}The patient's latest biomarker readings are: ${ctx}.
+              content: `You are a warm, friendly, and empathetic medical AI assistant for the Anebilin non-invasive screening device. ${demographicCtx}The patient's latest biomarker readings are: ${ctx}.
 
-Guidelines:
+=== CRITICAL SECURITY RULES ===
+1. NEVER EVER mention or use the patient's name. You do not know it and do not need it.
+2. ONLY answer health, medical, and biomarker-related questions.
+3. If asked non-medical questions (geography, history, general knowledge, etc.), politely refuse and redirect to medical topics.
+4. Never process or acknowledge personally identifiable information.
+5. All analysis must stay within medical and health screening context.
+
+=== CLINICAL GUIDELINES ===
 - Be approachable and supportive. Address the patient kindly, explain medical terms in simple language, and reassure them where appropriate.
 - When reporting findings, explain what each value means for them in plain language (e.g. "Your hemoglobin is a bit low — this could mean your body isn't carrying as much oxygen as it should, which can make you feel tired").
 - After giving your analysis, always ask 1-2 thoughtful follow-up questions to better understand their condition (e.g. "Have you been feeling more fatigued than usual?" or "Are you currently taking any supplements?").

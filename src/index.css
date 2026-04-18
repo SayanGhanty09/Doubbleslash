@@ -1,27 +1,27 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap');
 
 :root {
-  --bg-color: #05060a;
-  --surface-color: #0f1117;
-  --surface-lighter: #1a1d26;
+  --bg-color: #f4f7fb;
+  --surface-color: #ffffff;
+  --surface-lighter: #eef3f8;
   --primary-color: #00d2ff;
   --primary-glow: rgba(0, 210, 255, 0.4);
   --secondary-color: #4f46e5;
-  --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
   --text-tertiary: #64748b;
-  --border-color: rgba(255, 255, 255, 0.08);
+  --border-color: rgba(15, 23, 42, 0.12);
   --success-color: #10b981;
   --warning-color: #f59e0b;
   --error-color: #ef4444;
   --sidebar-width: 260px;
   --topbar-height: 70px;
 
-  font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: 'Source Sans 3', system-ui, -apple-system, Segoe UI, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
-  color-scheme: dark;
+  color-scheme: light;
   color: var(--text-primary);
   background-color: var(--bg-color);
 
@@ -40,8 +40,7 @@
 body {
   min-height: 100vh;
   overflow-x: hidden;
-  background: transparent;
-  /* Allow fixed canvas elements to show through */
+  background: #f4f7fb;
   padding-bottom: 40px;
 }
 
@@ -66,10 +65,11 @@ h5 {
 }
 
 .glass {
-  background: rgba(15, 17, 23, 0.7);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   border: 1px solid var(--border-color);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
 }
 
 .glow-shadow {
@@ -110,38 +110,20 @@ h5 {
   padding: 24px;
 }
 
-/* Glowing Animated Text */
+/* Keep headings clean and legible */
 .glowing-heading {
-  background: linear-gradient(90deg, #ffffff, var(--primary-color), #ffffff);
-  background-size: 200% auto;
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  animation: textShine 4s linear infinite, textPulse 2s ease-in-out infinite alternate;
-  display: inline-block;
-}
-
-@keyframes textShine {
-  to {
-    background-position: 200% center;
-  }
-}
-
-@keyframes textPulse {
-  from {
-    filter: drop-shadow(0 0 4px rgba(0, 210, 255, 0.3));
-  }
-
-  to {
-    filter: drop-shadow(0 0 12px rgba(0, 210, 255, 0.7)) drop-shadow(0 0 4px rgba(255, 255, 255, 0.4));
-  }
+  color: var(--text-primary);
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  animation: none;
+  display: inline;
 }
 
 /* --- Premium Animations & Glow Effects --- */
 
 /* Floating Element Animation */
 .animate-float {
-  animation: float 6s ease-in-out infinite;
+  animation: none;
 }
 
 @keyframes float {
@@ -177,7 +159,7 @@ h5 {
   bottom: -4px;
   border-radius: 50%;
   border: 2px solid var(--success-color);
-  animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+  animation: ping 3.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
 @keyframes ping {
@@ -193,43 +175,18 @@ h5 {
 .btn-shimmer {
   position: relative;
   overflow: hidden;
-  background: rgba(0, 210, 255, 0.1);
+  background: color-mix(in srgb, var(--primary-color) 8%, white);
   border: 1px solid var(--primary-color);
-  transition: all 0.3s ease;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
 .btn-shimmer::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 50%;
-  height: 100%;
-  background: linear-gradient(90deg,
-      transparent,
-      rgba(255, 255, 255, 0.2),
-      transparent);
-  transform: skewX(-20deg);
-  animation: shimmer-sweep 3s infinite linear;
+  content: none;
 }
 
 .btn-shimmer:hover {
-  box-shadow: 0 0 15px var(--primary-glow);
-  transform: translateY(-2px);
-}
-
-@keyframes shimmer-sweep {
-  0% {
-    left: -100%;
-  }
-
-  20% {
-    left: 200%;
-  }
-
-  100% {
-    left: 200%;
-  }
+  box-shadow: 0 2px 8px var(--primary-glow);
+  transform: translateY(-1px);
 }
 
 /* --- Print / Prescription Styles --- */
@@ -280,133 +237,57 @@ h5 {
 /* Card Glow Border (Realistic/Subtle) */
 .card-glow {
   position: relative;
-  transition: all 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
 }
 
 .card-glow:hover {
-  box-shadow:
-    0 10px 30px -5px rgba(0, 210, 255, 0.15),
-    0 8px 10px -6px rgba(0, 210, 255, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  transform: translateY(-2px);
-  border-color: rgba(0, 210, 255, 0.3);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.09);
+  transform: translateY(-1px);
+  border-color: var(--border-color);
 }
 
 /* --- Advanced Premium Animations (Internet Inspired) --- */
 
 /* 1. Animated Gradient Mesh Background */
 .bg-mesh-animated {
-  background:
-    radial-gradient(circle at top left, rgba(0, 210, 255, 0.08) 0%, transparent 50%),
-    radial-gradient(circle at bottom right, rgba(99, 102, 241, 0.08) 0%, transparent 50%);
-  background-size: 200% 200%;
-  animation: meshFlow 8s ease infinite alternate;
-}
-
-@keyframes meshFlow {
-  0% {
-    background-position: 0% 0%;
-  }
-
-  100% {
-    background-position: 100% 100%;
-  }
+  background: transparent;
+  animation: none;
 }
 
 /* 2. Ambient Edge Glow (Realistic Premium) */
 .border-spin-premium {
   position: relative;
   border-radius: inherit;
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.05),
-    0 0 0 1px rgba(0, 210, 255, 0.05);
-  transition: all 0.5s ease;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
+  transition: box-shadow 0.2s ease;
   z-index: 1;
 }
 
 .border-spin-premium::before {
-  content: '';
-  position: absolute;
-  inset: -2px;
-  border-radius: inherit;
-  background: linear-gradient(to bottom right,
-      rgba(0, 210, 255, 0.4) 0%,
-      transparent 30%,
-      transparent 70%,
-      rgba(99, 102, 241, 0.4) 100%);
-  z-index: -1;
-  opacity: 0.3;
-  transition: opacity 0.5s ease;
-  filter: blur(8px);
-  animation: ambientBreathe 6s ease-in-out infinite alternate;
+  content: none;
 }
 
 .border-spin-premium:hover {
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.1),
-    0 0 0 1px rgba(0, 210, 255, 0.2);
-}
-
-.border-spin-premium:hover::before {
-  opacity: 0.8;
-  filter: blur(14px);
-}
-
-@keyframes ambientBreathe {
-  0% {
-    opacity: 0.2;
-    transform: scale(0.99);
-  }
-
-  100% {
-    opacity: 0.5;
-    transform: scale(1.02);
-  }
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
 }
 
 /* 3. Neon Text Glitch / Pulse */
 .text-neon-pulse {
-  color: #fff;
-  text-shadow:
-    0 0 5px #fff,
-    0 0 10px #fff,
-    0 0 20px var(--primary-color),
-    0 0 40px var(--primary-color);
-  animation: neonFlicker 2s infinite alternate;
-}
-
-@keyframes neonFlicker {
-
-  0%,
-  19%,
-  21%,
-  23%,
-  25%,
-  54%,
-  56%,
-  100% {
-    opacity: 1;
-    text-shadow: 0 0 10px var(--primary-color), 0 0 20px var(--primary-color);
-  }
-
-  20%,
-  24%,
-  55% {
-    opacity: 0.8;
-    text-shadow: none;
-  }
+  color: var(--text-primary);
+  text-shadow: none;
+  animation: none;
 }
 
 /* 4. Hover Lift & Glow Strong */
 .hover-lift-glow {
-  transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .hover-lift-glow:hover {
-  transform: translateY(-8px) scale(1.02);
-  box-shadow: 0 15px 30px rgba(0, 210, 255, 0.2), 0 0 20px rgba(0, 210, 255, 0.4);
-  border-color: rgba(0, 210, 255, 0.6);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
+  border-color: var(--border-color);
   z-index: 10;
 }
 
@@ -424,43 +305,11 @@ h5 {
   right: 0;
   height: 4px;
   background: var(--card-color, var(--primary-color));
-  box-shadow:
-    0 0 15px 2px var(--card-color, var(--primary-color)),
-    inset 0 2px 5px var(--card-color, var(--primary-color));
+  box-shadow: none;
   z-index: 2;
-  animation: neonEdgePulse 1.5s ease-in-out infinite alternate;
+  animation: none;
 }
 
 .vital-card-edge-glow::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 50%;
-  height: 4px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8), transparent);
-  animation: glowingLineSweep 3s infinite linear;
-  z-index: 3;
-}
-
-@keyframes neonEdgePulse {
-  0% {
-    opacity: 0.7;
-    filter: brightness(0.8);
-  }
-
-  100% {
-    opacity: 1;
-    filter: brightness(1.2) saturate(1.2);
-  }
-}
-
-@keyframes glowingLineSweep {
-  0% {
-    left: -100%;
-  }
-
-  100% {
-    left: 200%;
-  }
+  content: none;
 }

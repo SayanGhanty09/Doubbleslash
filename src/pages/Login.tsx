@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Activity, LogIn, UserPlus, Eye, EyeOff } from 'lucide-react';
+import { Activity, LogIn, UserPlus, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 const Login: React.FC = () => {
-  const { login, signup } = useAuth();
+  const { login, signup, loading: authLoading } = useAuth();
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -12,22 +12,50 @@ const Login: React.FC = () => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setIsSubmitting(true);
 
-    if (mode === 'login') {
-      if (!email.trim() || !password.trim()) { setError('Please fill in all fields'); return; }
-      const err = login(email.trim(), password);
-      if (err) setError(err);
-    } else {
-      if (!name.trim() || !email.trim() || !password.trim()) { setError('Please fill in all required fields'); return; }
-      if (password.length < 6) { setError('Password must be at least 6 characters'); return; }
-      const err = signup(name.trim(), email.trim(), specialty.trim() || 'General', password);
-      if (err) setError(err);
+    try {
+      if (mode === 'login') {
+        if (!email.trim() || !password.trim()) {
+          setError('Please fill in all fields');
+          setIsSubmitting(false);
+          return;
+        }
+        const err = await login(email.trim(), password);
+        if (err) setError(err);
+      } else {
+        if (!name.trim() || !email.trim() || !password.trim()) {
+          setError('Please fill in all required fields');
+          setIsSubmitting(false);
+          return;
+        }
+        if (password.length < 6) {
+          setError('Password must be at least 6 characters');
+          setIsSubmitting(false);
+          return;
+        }
+        const err = await signup(name.trim(), email.trim(), specialty.trim() || 'General', password);
+        if (err) setError(err);
+        else {
+          setName('');
+          setEmail('');
+          setPassword('');
+          setSpecialty('');
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setIsSubmitting(false);
     }
   };
+
+  const isLoading = isSubmitting || authLoading;
 
   return (
     <div style={{
@@ -85,13 +113,18 @@ const Login: React.FC = () => {
           {(['login', 'signup'] as const).map(m => (
             <button
               key={m}
-              onClick={() => { setMode(m); setError(''); }}
+              onClick={() => {
+                setMode(m);
+                setError('');
+              }}
+              disabled={isLoading}
               style={{
                 flex: 1, padding: '10px 0', borderRadius: 10, border: 'none',
                 background: mode === m ? 'rgba(0,210,255,0.12)' : 'transparent',
                 color: mode === m ? '#00d2ff' : 'rgba(255,255,255,0.4)',
-                fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer',
+                fontWeight: 600, fontSize: '0.9rem', cursor: isLoading ? 'not-allowed' : 'pointer',
                 transition: 'all 0.2s', fontFamily: 'inherit',
+                opacity: isLoading ? 0.6 : 1,
               }}
             >
               {m === 'login' ? 'Sign In' : 'Sign Up'}
@@ -110,11 +143,14 @@ const Login: React.FC = () => {
                   value={name}
                   onChange={e => setName(e.target.value)}
                   placeholder="Dr. Jane Smith"
+                  disabled={isLoading}
                   style={{
                     width: '100%', padding: '12px 16px', borderRadius: 10,
                     border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.3)',
                     color: '#fff', outline: 'none', fontSize: '0.95rem', fontFamily: 'inherit',
                     boxSizing: 'border-box',
+                    opacity: isLoading ? 0.6 : 1,
+                    cursor: isLoading ? 'not-allowed' : 'text',
                   }}
                 />
               </div>
@@ -126,11 +162,14 @@ const Login: React.FC = () => {
                   value={specialty}
                   onChange={e => setSpecialty(e.target.value)}
                   placeholder="Cardiologist, General Physician..."
+                  disabled={isLoading}
                   style={{
                     width: '100%', padding: '12px 16px', borderRadius: 10,
                     border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.3)',
                     color: '#fff', outline: 'none', fontSize: '0.95rem', fontFamily: 'inherit',
                     boxSizing: 'border-box',
+                    opacity: isLoading ? 0.6 : 1,
+                    cursor: isLoading ? 'not-allowed' : 'text',
                   }}
                 />
               </div>
@@ -146,11 +185,14 @@ const Login: React.FC = () => {
               value={email}
               onChange={e => setEmail(e.target.value)}
               placeholder="doctor@clinic.com"
+              disabled={isLoading}
               style={{
                 width: '100%', padding: '12px 16px', borderRadius: 10,
                 border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.3)',
                 color: '#fff', outline: 'none', fontSize: '0.95rem', fontFamily: 'inherit',
                 boxSizing: 'border-box',
+                opacity: isLoading ? 0.6 : 1,
+                cursor: isLoading ? 'not-allowed' : 'text',
               }}
             />
           </div>
@@ -165,20 +207,25 @@ const Login: React.FC = () => {
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 placeholder="••••••••"
+                disabled={isLoading}
                 style={{
                   width: '100%', padding: '12px 44px 12px 16px', borderRadius: 10,
                   border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.3)',
                   color: '#fff', outline: 'none', fontSize: '0.95rem', fontFamily: 'inherit',
                   boxSizing: 'border-box',
+                  opacity: isLoading ? 0.6 : 1,
+                  cursor: isLoading ? 'not-allowed' : 'text',
                 }}
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
+                disabled={isLoading}
                 style={{
                   position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
-                  background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.3)',
-                  padding: 0, display: 'flex',
+                  background: 'none', border: 'none', cursor: isLoading ? 'not-allowed' : 'pointer',
+                  color: 'rgba(255,255,255,0.3)', padding: 0, display: 'flex',
+                  opacity: isLoading ? 0.6 : 1,
                 }}
               >
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
@@ -198,22 +245,44 @@ const Login: React.FC = () => {
 
           <button
             type="submit"
+            disabled={isLoading}
             style={{
               padding: '14px', borderRadius: 12, border: 'none',
-              background: 'linear-gradient(135deg, #00d2ff, #0096c8)',
+              background: isLoading ? 'rgba(0,210,255,0.3)' : 'linear-gradient(135deg, #00d2ff, #0096c8)',
               color: '#000', fontWeight: 700, fontSize: '1rem',
-              cursor: 'pointer', display: 'flex', alignItems: 'center',
+              cursor: isLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center',
               justifyContent: 'center', gap: 10, marginTop: 8,
               boxShadow: '0 4px 0 rgba(0,100,150,1), 0 8px 20px rgba(0,210,255,0.25)',
               fontFamily: 'inherit',
               transition: 'transform 0.1s, box-shadow 0.1s',
+              opacity: isLoading ? 0.7 : 1,
             }}
-            onMouseDown={e => { e.currentTarget.style.transform = 'translateY(2px)'; e.currentTarget.style.boxShadow = '0 2px 0 rgba(0,100,150,1), 0 4px 10px rgba(0,210,255,0.25)'; }}
-            onMouseUp={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = ''; }}
-            onMouseLeave={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = ''; }}
+            onMouseDown={e => {
+              if (!isLoading) {
+                e.currentTarget.style.transform = 'translateY(2px)';
+                e.currentTarget.style.boxShadow = '0 2px 0 rgba(0,100,150,1), 0 4px 10px rgba(0,210,255,0.25)';
+              }
+            }}
+            onMouseUp={e => {
+              e.currentTarget.style.transform = '';
+              e.currentTarget.style.boxShadow = '';
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.transform = '';
+              e.currentTarget.style.boxShadow = '';
+            }}
           >
-            {mode === 'login' ? <LogIn size={20} /> : <UserPlus size={20} />}
-            {mode === 'login' ? 'Sign In' : 'Create Account'}
+            {isLoading ? (
+              <>
+                <Loader2 size={20} className="animate-spin" />
+                {mode === 'login' ? 'Signing In...' : 'Creating Account...'}
+              </>
+            ) : (
+              <>
+                {mode === 'login' ? <LogIn size={20} /> : <UserPlus size={20} />}
+                {mode === 'login' ? 'Sign In' : 'Create Account'}
+              </>
+            )}
           </button>
         </form>
       </motion.div>

@@ -15,17 +15,30 @@ import {
   Play,
   AlertTriangle,
   UserPlus,
-  Users
+  Users,
+  MapPin,
+  AlertCircle,
+  Locate,
 } from "lucide-react";
 
 import { usePatient } from "../components/layout/Shell";
 import { useBLE, BLEStatus } from "../contexts/BLEContext";
 import { usePatientStore } from "../contexts/PatientStore";
 import type { Patient } from "../contexts/PatientStore";
-import { getOpenRouterKey, getOpenRouterModel } from "./Settings";
+import { getBPCaptureEnabled } from "../utils/preferences";
+import { reverseGeocode } from "../utils/reverseGeocode";
 import AIAssistantChat from "../components/AIAssistantChat";
+import { requestLiveRecordingReport } from "../services/exchangeClient";
+
+function formatFindingLabel(label: string): string {
+  return label
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .toUpperCase();
+}
 
 const LiveRecording: React.FC = () => {
+  const bpCaptureEnabled = getBPCaptureEnabled();
   const location = useLocation();
   const { activePatient, setActivePatient } = usePatient();
   const {
@@ -46,7 +59,14 @@ const LiveRecording: React.FC = () => {
   const [newName, setNewName] = useState("");
   const [newAge, setNewAge] = useState("");
   const [newSex, setNewSex] = useState<'Male' | 'Female' | 'Other'>('Male');
+  const [newLatitude, setNewLatitude] = useState("");
+  const [newLongitude, setNewLongitude] = useState("");
+  const [newState, setNewState] = useState("");
+  const [newCity, setNewCity] = useState("");
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
+  const [isLocating, setIsLocating] = useState(false);
+  const [isGeocoding, setIsGeocoding] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
 
   // Auto-save recording when scan finishes
   const savedRef = useRef(false);
@@ -105,6 +125,65 @@ const LiveRecording: React.FC = () => {
     setShowPatientPicker(true);
   };
 
+  const requestAccurateLocation = async () => {
+    setLocationError(null);
+    if (!('geolocation' in navigator)) {
+      setLocationError('Geolocation is not supported by this browser.');
+      return;
+    }
+    setIsLocating(true);
+    try {
+      if ('permissions' in navigator && navigator.permissions?.query) {
+        const permission = await navigator.permissions.query({ name: 'geolocation' as PermissionName });
+        if (permission.state === 'denied') {
+          setLocationError('Location permission is blocked. Please enable location access in browser settings.');
+          return;
+        }
+      }
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          maximumAge: 0,
+          timeout: 15000,
+        });
+      });
+      const lat = position.coords.latitude;
+      const lon = position.coords.longitude;
+      setNewLatitude(lat.toFixed(6));
+      setNewLongitude(lon.toFixed(6));
+      // Auto-fill state and city
+      await geocodeCoordinates(lat, lon);
+    } catch (err) {
+      const geoError = err as GeolocationPositionError;
+      if (geoError?.code === 1) {
+        setLocationError('Location permission denied. Please allow location access.');
+      } else if (geoError?.code === 2) {
+        setLocationError('Location unavailable. Make sure GPS is enabled.');
+      } else if (geoError?.code === 3) {
+        setLocationError('Location request timed out. Try again.');
+      } else {
+        setLocationError('Unable to fetch location. Please enter manually.');
+      }
+    } finally {
+      setIsLocating(false);
+    }
+  };
+
+  const geocodeCoordinates = async (lat: number, lon: number) => {
+    setIsGeocoding(true);
+    try {
+      const result = await reverseGeocode(lat, lon);
+      if (result) {
+        setNewState(result.state);
+        setNewCity(result.city);
+      }
+    } catch (err) {
+      console.error('Reverse geocoding failed:', err);
+    } finally {
+      setIsGeocoding(false);
+    }
+  };
+
   const startScanWithPatient = (patient: Patient) => {
     setSelectedPatientId(patient.id);
     setActivePatient(patient.name);
@@ -113,10 +192,26 @@ const LiveRecording: React.FC = () => {
     startFullScan();
   };
 
-  const handleAddAndStart = () => {
+  const handleAddAndStart = async () => {
     if (!newName.trim() || !newAge.trim()) return;
-    const p = addPatient({ name: newName.trim(), age: parseInt(newAge), sex: newSex });
-    setNewName(""); setNewAge(""); setNewSex('Male');
+    const p = await addPatient({
+      name: newName.trim(),
+      age: parseInt(newAge),
+      sex: newSex,
+      latitude: newLatitude ? parseFloat(newLatitude) : undefined,
+      longitude: newLongitude ? parseFloat(newLongitude) : undefined,
+      state: newState || undefined,
+      city: newCity || undefined,
+    });
+    if (!p) return;
+    setNewName("");
+    setNewAge("");
+    setNewSex('Male');
+    setNewLatitude("");
+    setNewLongitude("");
+    setNewState("");
+    setNewCity("");
+    setLocationError(null);
     startScanWithPatient(p);
   };
 
@@ -152,115 +247,79 @@ const LiveRecording: React.FC = () => {
 
   // Phase label
   const phaseLabel = scanPhase === 'normal' ? "Normal Scan" :
-                     scanPhase === 'bp' ? "BP Scan" :
+                     scanPhase === 'bp' && bpCaptureEnabled ? "BP Scan" :
                      scanPhase === 'done' ? "Scan Complete" : "";
 
   // Vital cards — from best results
   const vitalCards = useMemo(() => {
     const d = displayData;
-    return [
+    const cards = [
       { label: "Heart Rate", value: d?.hr ? d.hr.toFixed(2) : "--", unit: "bpm", icon: Heart, color: "#ef4444" },
       { label: "SpO2", value: d?.spo2 ? d.spo2.toFixed(2) : "--", unit: "%", icon: Droplets, color: "#00d2ff" },
-      { label: "Blood Pressure", value: d?.bpSys ? `${d.bpSys.toFixed(2)}/${d.bpDia?.toFixed(2)}` : "--", unit: "mmHg", icon: ActivityIcon, color: "#f59e0b" },
-      { label: "Resp Rate", value: d?.respRate ? d.respRate.toFixed(2) : "--", unit: "brpm", icon: Wind, color: "#10b981" },
       { label: "Hemoglobin", value: d?.hb ? d.hb.toFixed(2) : "--", unit: "g/dL", icon: FlaskConical, color: "#a855f7" },
       { label: "Bilirubin", value: d?.bilirubin ? d.bilirubin.toFixed(2) : "--", unit: "mg/dL", icon: ActivityIcon, color: "#f59e0b" },
       { label: "HRV (SDNN)", value: d?.sdnn ? d.sdnn.toFixed(2) : "--", unit: "ms", icon: Brain, color: "#10b981" },
     ];
-  }, [displayData]);
 
-  // AI Report — via OpenRouter
+    if (bpCaptureEnabled) {
+      cards.splice(2, 0,
+        { label: "Blood Pressure", value: d?.bpSys ? `${d.bpSys.toFixed(2)}/${d.bpDia?.toFixed(2)}` : "--", unit: "mmHg", icon: ActivityIcon, color: "#f59e0b" },
+        { label: "Resp Rate", value: d?.respRate ? d.respRate.toFixed(2) : "--", unit: "brpm", icon: Wind, color: "#10b981" },
+      );
+    }
+
+    return cards;
+  }, [displayData, bpCaptureEnabled]);
+
+  // AI Report — via Exchange endpoint (server-side report generation)
   const generateAIReport = async () => {
     if (!displayData?.hr) return;
-    const apiKey = getOpenRouterKey();
-    if (!apiKey) { alert("Please set your OpenRouter API key in Settings."); return; }
+    const patient = patients.find(p => p.id === selectedPatientId);
+    if (!patient) {
+      alert("Please select a patient before generating report.");
+      return;
+    }
 
     setIsAnalyzing(true);
-    const patient = patients.find(p => p.id === selectedPatientId);
-    const readingJson = localStorage.getItem('spectru_last_reading');
-    const readingData = readingJson ? JSON.parse(readingJson) : {
-      patient: patient ? { name: patient.name, age: patient.age, sex: patient.sex } : null,
-      timestamp: new Date().toISOString(),
-      biomarkers: {
-        spo2: displayData.spo2 ?? null,
-        heartRate: displayData.hr ?? null,
-        perfusionIndex: displayData.pi ?? null,
-        signalQuality: displayData.sqi != null ? Math.round(displayData.sqi * 100) : null,
-        sdnn: displayData.sdnn ?? null,
-        rmssd: displayData.rmssd ?? null,
-        hemoglobin: displayData.hb ?? null,
-        bilirubin: displayData.bilirubin ?? null,
-        systolicBP: displayData.bpSys ?? null,
-        diastolicBP: displayData.bpDia ?? null,
-        pulseRate: displayData.pulseRate ?? null,
-        respirationRate: displayData.respRate ?? null,
-      }
-    };
-
-    const systemPrompt = `You are a clinical screening AI assistant for Anebilin, a non-invasive optical biomarker screening device. You will receive a JSON object containing patient demographics and screening biomarker readings from the device.
-
-Your task is to provide a structured preliminary screening report. This is NOT a diagnosis — it is an AI-assisted screening interpretation to flag potential concerns for follow-up by a qualified physician.
-
-Analyze ALL provided biomarkers against standard clinical reference ranges:
-- SpO2: Normal 95-100%, concerning <94%, critical <90%
-- Heart Rate: Normal resting 60-100 bpm, bradycardia <60, tachycardia >100
-- Blood Pressure: Normal <120/80, elevated 120-129/<80, Stage 1 HTN 130-139/80-89, Stage 2 HTN ≥140/≥90, hypotension <90/60
-- HRV SDNN: Normal 50-100ms, low <50ms indicates stress/autonomic dysfunction
-- HRV RMSSD: Normal 20-50ms, reflects parasympathetic activity
-- Hemoglobin: Male 13.5-17.5 g/dL, Female 12.0-15.5 g/dL; <7 severe anemia
-- Bilirubin: Normal 0.1-1.2 mg/dL, elevated >1.2, clinical jaundice >2.5
-- Respiration Rate: Normal 12-20 brpm, tachypnea >20, bradypnea <12
-- Perfusion Index: Good >1%, acceptable 0.5-1%, poor <0.5%
-- Signal Quality: Reliable >70%, marginal 40-70%, unreliable <40%
-
-Respond in this exact JSON format:
-{
-  "healthScore": <number 1-10, where 10 is optimal health>,
-  "summary": "<2-3 sentence overall assessment>",
-  "findings": [
-    { "parameter": "<name>", "value": "<measured value with unit>", "status": "normal|borderline|abnormal", "interpretation": "<clinical significance>" }
-  ],
-  "recommendations": ["<actionable recommendation 1>", "<recommendation 2>", ...],
-  "warnings": ["<any critical flags that need immediate attention>"],
-  "disclaimer": "This is an AI-assisted screening interpretation, not a medical diagnosis. Consult a healthcare professional for clinical decisions."
-}
-
-Consider the patient's age and sex when interpreting values. If signal quality is low (<40%), note that readings may be unreliable. Be thorough but concise.`;
-
     try {
-      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`,
-          "HTTP-Referer": window.location.origin,
-          "X-Title": "Anebilin Spectru"
+      const readingPayload = {
+        deviceName: "Spectru",
+        patient: {
+          id: patient.id,
+          name: patient.name,
+          age: patient.age,
+          sex: patient.sex,
         },
-        body: JSON.stringify({
-          model: getOpenRouterModel(),
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: `Here is the screening data JSON:\n\n${JSON.stringify(readingData, null, 2)}\n\nProvide the structured screening report.` }
-          ],
-          temperature: 0.3,
-          max_tokens: 2000
-        })
-      });
-      const data = await res.json();
-      const raw = data.choices?.[0]?.message?.content ?? '';
-      // Extract JSON from possible markdown code fence
-      const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        setAnalysisResult(parsed);
-      } else {
-        setAnalysisResult({ healthScore: 0, summary: raw, findings: [], recommendations: [], warnings: [], disclaimer: '' });
-      }
+        timestamp: new Date().toISOString(),
+        biomarkers: {
+          spo2: displayData.spo2 ?? null,
+          heartRate: displayData.hr ?? null,
+          perfusionIndex: displayData.pi ?? null,
+          signalQuality: displayData.sqi != null ? Math.round(displayData.sqi * 100) : null,
+          sdnn: displayData.sdnn ?? null,
+          rmssd: displayData.rmssd ?? null,
+          hemoglobin: displayData.hb ?? null,
+          bilirubin: displayData.bilirubin ?? null,
+          systolicBP: displayData.bpSys ?? null,
+          diastolicBP: displayData.bpDia ?? null,
+          pulseRate: displayData.pulseRate ?? null,
+          respirationRate: displayData.respRate ?? null,
+        },
+      };
+
+      const { requestId, report } = await requestLiveRecordingReport(readingPayload);
+      setReportId(requestId);
+      setAnalysisResult(report);
+
+      localStorage.setItem('spectru_last_exchange_request_id', requestId);
+      localStorage.setItem('spectru_last_exchange_payload', JSON.stringify(readingPayload));
+      localStorage.setItem('spectru_last_exchange_report', JSON.stringify(report));
     } catch (e: any) {
       console.error(e);
       alert("AI report failed: " + e.message);
+    } finally {
+      setIsAnalyzing(false);
     }
-    setIsAnalyzing(false);
   };
 
   // Email
@@ -363,7 +422,7 @@ Consider the patient's age and sex when interpreting values. If signal quality i
           </div>
         )}
 
-        {scanPhase === 'bp' && biomarkers.pulseRate !== undefined && biomarkers.pulseRate > 0 && (
+        {bpCaptureEnabled && scanPhase === 'bp' && biomarkers.pulseRate !== undefined && biomarkers.pulseRate > 0 && (
           <div style={{ display: "flex", gap: 16 }}>
             <span style={{ fontSize: "0.9rem", color: "var(--text-secondary)" }}>PR: <strong style={{ color: "var(--text-primary)" }}>{biomarkers.pulseRate.toFixed(0)} bpm</strong></span>
           </div>
@@ -435,7 +494,7 @@ Consider the patient's age and sex when interpreting values. If signal quality i
                 <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
                   {analysisResult.findings.map((f: any, i: number) => (
                     <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "10px 14px", borderRadius: 8, background: f.status === 'abnormal' ? 'rgba(239,68,68,0.08)' : f.status === 'borderline' ? 'rgba(245,158,11,0.08)' : 'rgba(16,185,129,0.08)', border: `1px solid ${f.status === 'abnormal' ? 'rgba(239,68,68,0.2)' : f.status === 'borderline' ? 'rgba(245,158,11,0.2)' : 'rgba(16,185,129,0.2)'}` }}>
-                      <span style={{ fontWeight: 700, minWidth: 100, color: f.status === 'abnormal' ? '#ef4444' : f.status === 'borderline' ? '#f59e0b' : '#10b981' }}>{f.parameter}</span>
+                      <span style={{ fontWeight: 700, minWidth: 100, color: f.status === 'abnormal' ? '#ef4444' : f.status === 'borderline' ? '#f59e0b' : '#10b981' }}>{formatFindingLabel(String(f.parameter ?? 'PARAMETER'))}</span>
                       <span style={{ fontFamily: "monospace", minWidth: 80, color: "var(--text-primary)" }}>{f.value}</span>
                       <span style={{ color: "var(--text-secondary)", flex: 1 }}>{f.interpretation}</span>
                     </div>
@@ -558,91 +617,202 @@ Consider the patient's age and sex when interpreting values. If signal quality i
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             className="glass border-spin-premium"
-            style={{ padding: 35, borderRadius: 20, width: "520px", maxWidth: "95%", maxHeight: "80vh", display: "flex", flexDirection: "column", gap: 20 }}
+            style={{ padding: 24, borderRadius: 20, width: "520px", maxWidth: "95%", maxHeight: "85vh", display: "flex", flexDirection: "column", gap: 16 }}
           >
-            <h3 className="glowing-heading" style={{ margin: 0, display: "flex", alignItems: "center", gap: 12, fontSize: "1.5rem" }}>
-              <Users size={24} color="var(--primary-color)" /> Select Patient
+            <h3 className="glowing-heading" style={{ margin: 0, display: "flex", alignItems: "center", gap: 12, fontSize: "1.3rem", flexShrink: 0 }}>
+              <Users size={20} color="var(--primary-color)" /> Select Patient
             </h3>
 
-            {/* Existing Patients */}
-            {patients.length > 0 && (
-              <div>
-                <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: 10 }}>Registered Patients</p>
-                <div className="scroll-hide" style={{ maxHeight: 200, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
-                  {patients.map(p => (
-                    <button
-                      key={p.id}
-                      onClick={() => startScanWithPatient(p)}
-                      style={{
-                        width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
-                        padding: "12px 16px", borderRadius: 10,
-                        background: "rgba(255,255,255,0.03)", border: "1px solid var(--border-color)",
-                        cursor: "pointer", color: "var(--text-primary)", fontFamily: "inherit", fontSize: "0.95rem",
-                        transition: "background 0.2s"
-                      }}
-                      onMouseOver={(e) => (e.currentTarget.style.background = "rgba(0,210,255,0.08)")}
-                      onMouseOut={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.03)")}
-                    >
-                      <span style={{ fontWeight: 600 }}>{p.name}</span>
-                      <span style={{ fontSize: "0.8rem", color: "var(--text-tertiary)" }}>
-                        {p.age}y / {p.sex}
-                      </span>
-                    </button>
-                  ))}
+            {/* Scrollable content area */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 14, overflowY: "auto", flex: 1, minHeight: 0 }}>
+              {/* Existing Patients */}
+              {patients.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)", margin: "0 0 8px 0" }}>Registered Patients</p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {patients.map(p => (
+                      <button
+                        key={p.id}
+                        onClick={() => startScanWithPatient(p)}
+                        style={{
+                          width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
+                          padding: "10px 14px", borderRadius: 8,
+                          background: "rgba(255,255,255,0.03)", border: "1px solid var(--border-color)",
+                          cursor: "pointer", color: "var(--text-primary)", fontFamily: "inherit", fontSize: "0.9rem",
+                          transition: "background 0.2s"
+                        }}
+                        onMouseOver={(e) => (e.currentTarget.style.background = "rgba(0,210,255,0.08)")}
+                        onMouseOut={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.03)")}
+                      >
+                        <span style={{ fontWeight: 600 }}>{p.name}</span>
+                        <span style={{ fontSize: "0.75rem", color: "var(--text-tertiary)" }}>
+                          {p.age}y / {p.sex}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "8px 0" }}>
+                    <div style={{ flex: 1, height: 1, background: "var(--border-color)" }} />
+                    <span style={{ fontSize: "0.75rem", color: "var(--text-tertiary)" }}>OR ADD NEW</span>
+                    <div style={{ flex: 1, height: 1, background: "var(--border-color)" }} />
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Divider */}
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ flex: 1, height: 1, background: "var(--border-color)" }} />
-              <span style={{ fontSize: "0.8rem", color: "var(--text-tertiary)" }}>OR ADD NEW</span>
-              <div style={{ flex: 1, height: 1, background: "var(--border-color)" }} />
+              {/* New Patient Form */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <input
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="Full Name *"
+                  style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid var(--border-color)", background: "rgba(0,0,0,0.3)", color: "var(--text-primary)", outline: "none", fontSize: "0.9rem" }}
+                />
+                <div style={{ display: "flex", gap: 10 }}>
+                  <input
+                    value={newAge}
+                    onChange={(e) => setNewAge(e.target.value)}
+                    placeholder="Age *"
+                    type="number"
+                    style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: "1px solid var(--border-color)", background: "rgba(0,0,0,0.3)", color: "var(--text-primary)", outline: "none", fontSize: "0.9rem" }}
+                  />
+                  <select
+                    value={newSex}
+                    onChange={(e) => setNewSex(e.target.value as 'Male' | 'Female' | 'Other')}
+                    style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: "1px solid var(--border-color)", background: "rgba(0,0,0,0.3)", color: "var(--text-primary)", outline: "none", fontSize: "0.9rem" }}
+                  >
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+
+                {/* Location Fields */}
+                <div style={{ display: "flex", gap: 10 }}>
+                  <input
+                    value={newLatitude}
+                    onChange={(e) => setNewLatitude(e.target.value)}
+                    type="number"
+                    step="0.0001"
+                    placeholder="Latitude"
+                    style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: "1px solid var(--border-color)", background: "rgba(0,0,0,0.3)", color: "var(--text-primary)", outline: "none", fontSize: "0.85rem" }}
+                  />
+                  <input
+                    value={newLongitude}
+                    onChange={(e) => setNewLongitude(e.target.value)}
+                    type="number"
+                    step="0.0001"
+                    placeholder="Longitude"
+                    style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: "1px solid var(--border-color)", background: "rgba(0,0,0,0.3)", color: "var(--text-primary)", outline: "none", fontSize: "0.85rem" }}
+                  />
+                </div>
+
+                <button
+                  onClick={requestAccurateLocation}
+                  disabled={isLocating}
+                  style={{
+                    padding: "9px 12px",
+                    borderRadius: 8,
+                    background: "rgba(59,130,246,0.15)",
+                    color: "#93c5fd",
+                    border: "1px solid rgba(147,197,253,0.35)",
+                    fontWeight: 600,
+                    cursor: isLocating ? "not-allowed" : "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "6px",
+                    fontSize: "0.85rem",
+                    opacity: isLocating ? 0.7 : 1,
+                  }}
+                >
+                  {isLocating ? <Loader2 size={14} className="animate-spin" /> : <MapPin size={14} />}
+                  {isLocating ? "Getting Location..." : "Use Current Location"}
+                </button>
+
+                {newLatitude && newLongitude && (
+                  <button
+                    onClick={async () => {
+                      const lat = parseFloat(newLatitude);
+                      const lon = parseFloat(newLongitude);
+                      if (!isNaN(lat) && !isNaN(lon)) {
+                        await geocodeCoordinates(lat, lon);
+                      }
+                    }}
+                    disabled={isGeocoding}
+                    style={{
+                      padding: "9px 12px",
+                      borderRadius: 8,
+                      background: "rgba(34,197,94,0.15)",
+                      color: "#86efac",
+                      border: "1px solid rgba(134,239,172,0.35)",
+                      fontWeight: 600,
+                      cursor: isGeocoding ? "not-allowed" : "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "6px",
+                      fontSize: "0.85rem",
+                      opacity: isGeocoding ? 0.7 : 1,
+                    }}
+                  >
+                    {isGeocoding ? <Loader2 size={14} className="animate-spin" /> : <Locate size={14} />}
+                    {isGeocoding ? "Finding..." : "Find State & City"}
+                  </button>
+                )}
+
+                {(newState || newCity) && (
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <input
+                      value={newState}
+                      onChange={(e) => setNewState(e.target.value)}
+                      placeholder="State"
+                      style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: "1px solid var(--border-color)", background: "rgba(0,0,0,0.3)", color: "var(--text-primary)", outline: "none", fontSize: "0.9rem" }}
+                    />
+                    <input
+                      value={newCity}
+                      onChange={(e) => setNewCity(e.target.value)}
+                      placeholder="City"
+                      style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: "1px solid var(--border-color)", background: "rgba(0,0,0,0.3)", color: "var(--text-primary)", outline: "none", fontSize: "0.9rem" }}
+                    />
+                  </div>
+                )}
+
+                {locationError && (
+                  <div style={{
+                    padding: "8px 12px",
+                    borderRadius: "8px",
+                    background: "rgba(239,68,68,0.1)",
+                    border: "1px solid rgba(239,68,68,0.35)",
+                    color: "#fca5a5",
+                    fontSize: "0.8rem",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                  }}>
+                    <AlertCircle size={14} />
+                    <span>{locationError}</span>
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* New Patient Form */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <input
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                placeholder="Full Name *"
-                style={{ padding: "12px 16px", borderRadius: 8, border: "1px solid var(--border-color)", background: "rgba(0,0,0,0.3)", color: "var(--text-primary)", outline: "none", fontSize: "0.95rem" }}
-              />
-              <div style={{ display: "flex", gap: 12 }}>
-                <input
-                  value={newAge}
-                  onChange={(e) => setNewAge(e.target.value)}
-                  placeholder="Age *"
-                  type="number"
-                  style={{ flex: 1, padding: "12px 16px", borderRadius: 8, border: "1px solid var(--border-color)", background: "rgba(0,0,0,0.3)", color: "var(--text-primary)", outline: "none", fontSize: "0.95rem" }}
-                />
-                <select
-                  value={newSex}
-                  onChange={(e) => setNewSex(e.target.value as 'Male' | 'Female' | 'Other')}
-                  style={{ flex: 1, padding: "12px 16px", borderRadius: 8, border: "1px solid var(--border-color)", background: "rgba(0,0,0,0.3)", color: "var(--text-primary)", outline: "none", fontSize: "0.95rem" }}
-                >
-                  <option value="Male">Male</option>
-                  <option value="Female">Female</option>
-                  <option value="Other">Other</option>
-                </select>
-              </div>
-
+            {/* Fixed Buttons at Bottom */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, flexShrink: 0 }}>
               <button
                 onClick={handleAddAndStart}
                 disabled={!newName.trim() || !newAge.trim()}
                 className="btn-shimmer hover-lift-glow"
-                style={{ padding: "14px", borderRadius: 10, border: "none", cursor: (!newName.trim() || !newAge.trim()) ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, fontWeight: 700, fontSize: "1rem", color: "var(--text-primary)", opacity: (!newName.trim() || !newAge.trim()) ? 0.5 : 1 }}
+                style={{ padding: "12px", borderRadius: 10, border: "none", cursor: (!newName.trim() || !newAge.trim()) ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, fontWeight: 700, fontSize: "0.95rem", color: "var(--text-primary)", opacity: (!newName.trim() || !newAge.trim()) ? 0.5 : 1 }}
               >
-                <UserPlus size={20} /> Add & Start Recording
+                <UserPlus size={18} /> Add & Start Recording
+              </button>
+              <button
+                onClick={() => setShowPatientPicker(false)}
+                style={{ padding: "10px 20px", background: "none", border: "1px solid var(--border-color)", borderRadius: 8, cursor: "pointer", color: "var(--text-secondary)", fontSize: "0.85rem", fontWeight: 600 }}
+              >
+                Cancel
               </button>
             </div>
-
-            <button
-              onClick={() => setShowPatientPicker(false)}
-              style={{ alignSelf: "center", padding: "8px 24px", background: "none", border: "1px solid var(--border-color)", borderRadius: 8, cursor: "pointer", color: "var(--text-secondary)", fontSize: "0.9rem" }}
-            >
-              Cancel
-            </button>
           </motion.div>
         </div>
       )}

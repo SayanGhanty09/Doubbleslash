@@ -1,5 +1,6 @@
 /// <reference types="web-bluetooth" />
 import React, { createContext, useContext, useState, useRef, useCallback } from 'react';
+import { getBPCaptureEnabled } from '../utils/preferences';
 
 // ========================================================================
 // BLE UUIDs — must match firmware BLEManager.h
@@ -295,7 +296,7 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     // ----------------------------------------------------------------
-    // Full Scan: 20 s normal → stop → 20 s BP → stop → done
+    // Full Scan: 30 s normal -> optional 30 s BP -> done
     // ----------------------------------------------------------------
     const startFullScan = () => {
         if (!controlCharRef.current) { addLog("[SCAN] Not connected"); return; }
@@ -311,12 +312,13 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         let elapsed = 0;
         const NORMAL_DUR = 30;
         const BP_DUR = 30;
+        const bpEnabled = getBPCaptureEnabled();
 
         phaseRef.current = 'normal';
         setScanPhase('normal');
         setScanSeconds(NORMAL_DUR);
         sendCommand(0x01);
-        addLog("[SCAN] Phase 1/2: Normal mode (30 s)");
+        addLog(bpEnabled ? "[SCAN] Phase 1/2: Normal mode (30 s)" : "[SCAN] Normal mode (30 s), BP disabled");
 
         scanTimerRef.current = setInterval(async () => {
             elapsed++;
@@ -325,6 +327,15 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 setScanSeconds(NORMAL_DUR - elapsed);
             } else if (elapsed === NORMAL_DUR + 1) {
                 await sendCommand(0x00);
+                if (!bpEnabled) {
+                    addLog("[SCAN] Complete! (BP disabled)");
+                    phaseRef.current = 'idle';
+                    setScanPhase('done');
+                    setScanSeconds(0);
+                    if (scanTimerRef.current) { clearInterval(scanTimerRef.current); scanTimerRef.current = null; }
+                    return;
+                }
+
                 addLog("[SCAN] Normal complete. Starting BP...");
                 setTimeout(async () => {
                     phaseRef.current = 'bp';
@@ -333,7 +344,7 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                     await sendCommand(0x02);
                     addLog("[SCAN] Phase 2/2: BP mode (30 s)");
                 }, 500);
-            } else if (elapsed <= NORMAL_DUR + 1 + BP_DUR) {
+            } else if (bpEnabled && elapsed <= NORMAL_DUR + 1 + BP_DUR) {
                 setScanSeconds(NORMAL_DUR + 1 + BP_DUR - elapsed);
             } else {
                 await sendCommand(0x00);
